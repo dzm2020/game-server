@@ -1,0 +1,10 @@
+{"L":"info","T":"2026/06/11 19:11:04.765740+0800","C":"node/node.go:46","M":"加载全局配置完成","path":"config.yaml"}
+{"L":"info","T":"2026/06/11 19:11:04.780453+0800","C":"node/node.go:63","M":"节点初始化完成","path":"config.yaml","component_count":5}
+{"L":"info","T":"2026/06/11 19:11:04.780453+0800","C":"node/node.go:87","M":"节点启动流程开始","node_id":"","component_count":5}
+{"L":"info","T":"2026/06/11 19:11:04.780453+0800","C":"node/node.go:93","M":"触发生命周期回调","hook":"BeforeStart"}
+{"L":"info","T":"2026/06/11 19:11:04.780453+0800","C":"node/node.go:107","M":"组件注册完成","registered":5}
+{"L":"info","T":"2026/06/11 19:12:29.491112+0800","C":"node/node.go:46","M":"加载全局配置完成","path":"config.yaml"}
+{"L":"info","T":"2026/06/11 19:12:29.505294+0800","C":"node/node.go:63","M":"节点初始化完成","path":"config.yaml","component_count":5}
+{"L":"info","T":"2026/06/11 19:12:29.505294+0800","C":"node/node.go:101","M":"节点启动流程开始","node_id":"","component_count":5}
+{"L":"info","T":"2026/06/11 19:12:29.505294+0800","C":"node/node.go:107","M":"触发生命周期回调","hook":"BeforeStart"}
+{"L":"info","T":"2026/06/11 19:12:29.505294+0800","C":"node/node.go:121","M":"组件注册完成","registered":5}

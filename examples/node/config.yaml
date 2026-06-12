@@ -1,0 +1,28 @@
+base:
+  logger:
+    path: ./logs/example.log
+    level: info
+    printConsole: true
+    maxSize: 100
+    maxBackups: 3
+    maxAge: 7
+    compress: false
+    localTime: true
+  consul:
+    address: 127.0.0.1:8500
+    scheme: http
+  nats:
+    url: nats://127.0.0.1:4222
+  gateway:
+    enable: false
+    address: 127.0.0.1
+    port: 19090
+    actorName: gateway-router
+    routeNodeID: example-node-1
+    routeActorName: echo
+    requestTimeoutMs: 2000
+  self:
+    id: example-node-1
+    name: example
+    address: 127.0.0.1
+    port: 18080

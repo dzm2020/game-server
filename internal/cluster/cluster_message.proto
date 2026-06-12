@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package cluster;
+
+option go_package = ".;cluster";
+
+// ActorMessage 对齐 internal/protocol.Message 的核心字段。
+message ActorMessage {
+  uint32 cmd = 1;
+  uint32 act = 2;
+  uint32 error = 3;
+  uint32 index = 4;
+  bytes data = 5;
+}
+
+// ActorPID 对齐 pkg/actor.PID 的核心字段。
+message ActorPID {
+  uint64 actor_id = 1;
+  string actor_name = 2;
+  string node_id = 3;
+}
+
+// ClusterMessage 用于节点间投递到指定 actor。
+message ClusterMessage {
+  string trace_id = 1;
+
+  int64 created_at = 2;
+
+  // actor 侧需要处理的消息内容。
+  ActorMessage message = 3;
+
+  // 新字段：完整 PID 信息（推荐使用）。
+  ActorPID target_pid = 4;
+  ActorPID source_pid = 5;
+}
