@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 	"game-server/examples/node/service"
-	compSystem "game-server/internal/component/system"
+	compSystem "game-server/framework/runtime/component/system"
 	"log"
 
-	"game-server/internal/iface"
-	"game-server/internal/node"
+	"game-server/framework/runtime/iface"
+	"game-server/framework/runtime/node"
 )
 
 type lifecycleHook struct{}

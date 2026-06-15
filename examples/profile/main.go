@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"game-server/internal/profile"
+	"game-server/framework/runtime/profile"
 )
 
 func main() {

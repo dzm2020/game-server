@@ -6,7 +6,7 @@ import (
 )
 
 type Actor struct {
-	actor.BaseHandler
+	actor.BaseActor
 }
 
 func (h *Actor) OnInit(ctx actor.Context) {

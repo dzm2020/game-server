@@ -1,17 +1,26 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"time"
-
 	"actor"
-	compcluster "game-server/internal/component/cluster"
-	compsystem "game-server/internal/component/system"
-	"game-server/internal/iface"
-	"game-server/internal/node"
-	"game-server/internal/protocol"
+	"fmt"
+	compsystem "game-server/framework/runtime/component/system"
+	"game-server/framework/runtime/iface"
+	"game-server/framework/runtime/node"
+	"game-server/framework/runtime/route"
+	"log"
 )
+
+type actor1 struct {
+	actor.BaseActor
+}
+
+type actor2 struct {
+	actor.BaseActor
+}
+
+func Hello(session route.ISession, request interface{}) {
+
+}
 
 type lifecycleHook struct{}
 
@@ -27,33 +36,10 @@ func (l *lifecycleHook) AfterStart(node iface.INode) {
 	fmt.Printf("[hook] after_start node_id=%s\n", node.GetID())
 
 	systemComp := iface.GetComponent[*compsystem.Component]()
-	clusterComp := iface.GetComponent[*compcluster.Component]()
-	if systemComp == nil || systemComp.ISystem == nil || clusterComp == nil || clusterComp.Cluster == nil {
-		log.Printf("component not ready, system=%v cluster=%v", systemComp != nil, clusterComp != nil)
-		return
-	}
 
-	_, err := systemComp.Spawn(func(ctx actor.Context) {
-		msg, ok := ctx.Message().(*protocol.Message)
-		if !ok || msg == nil {
-			_ = ctx.Respond([]byte("bad-request"))
-			return
-		}
-		_ = ctx.Respond([]byte("pong"))
-	}, actor.WithName("echo"))
-	if err != nil {
-		log.Printf("spawn echo actor failed: %v", err)
-		return
-	}
+	pid1, _ := systemComp.SpawnActor(&actor1{})
+	pid2, _ := systemComp.SpawnActor(&actor2{})
 
-	sourcePID := actor.NewPID(0, "caller", "caller-node")
-	targetPID := actor.NewPID(0, "echo", node.GetID())
-	reply, err := clusterComp.RequestToPID(sourcePID, targetPID, protocol.NewMessage(1, 2, []byte("ping")), 3*time.Second)
-	if err != nil {
-		log.Printf("cluster request failed: %v", err)
-		return
-	}
-	log.Printf("cluster actor reply: %s", string(reply))
 }
 
 func (l *lifecycleHook) BeforeStop(node iface.INode) {

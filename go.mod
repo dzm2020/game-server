@@ -51,8 +51,8 @@ require (
 	golang.org/x/text v0.35.0 // indirect
 )
 
-replace consul_registry => ./pkg/consul_registry
+replace consul_registry => ./framework/pkg/consul_registry
 
-replace message_queue => ./pkg/message_queue
+replace message_queue => ./framework/pkg/message_queue
 
-replace actor => ./pkg/actor
+replace actor => ./framework/pkg/actor
