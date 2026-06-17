@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package cluster;
+
+option go_package = ".;cluster";
+
+service NodeService {
+  // 节点间双向流，复用所有内部通信
+  rpc Stream(stream ClusterMessage) returns (stream ClusterMessage);
+}
+
+// ClusterMessage 用于节点间投递到指定 actor。
+message ClusterMessage {
+  int64 created_at = 1;
+  string fromNodeID = 2;
+  string toNodeID = 3;
+  bytes  payload = 4;
+}
