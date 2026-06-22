@@ -2,7 +2,7 @@ package actor
 
 import (
 	"fmt"
-	"game-server/framework/protocol"
+	"game-server/framework/gen"
 	"reflect"
 	"sync"
 
@@ -10,11 +10,9 @@ import (
 )
 
 type entry struct {
-	handler RouteHandler
+	handler gen.ActorRouteHandler
 	t       reflect.Type
 }
-
-type RouteHandler func(ctx Context, request interface{}) error
 
 type Route struct {
 	mu       sync.RWMutex
@@ -27,9 +25,9 @@ func NewRoute() *Route {
 	}
 }
 
-func (r *Route) Register(cmd, act uint8, handler RouteHandler, request proto.Message) {
+func (r *Route) Register(cmd, act uint8, handler gen.ActorRouteHandler, request proto.Message) {
 	r.mu.Lock()
-	routeID := protocol.CmdAct(cmd, act)
+	routeID := gen.CmdAct(cmd, act)
 	var requestType reflect.Type
 	if request != nil {
 		requestType = reflect.TypeOf(request)
@@ -41,9 +39,9 @@ func (r *Route) Register(cmd, act uint8, handler RouteHandler, request proto.Mes
 	r.mu.Unlock()
 }
 
-func (r *Route) Handle(ctx Context, msg *protocol.Message) error {
+func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
 	r.mu.RLock()
-	e := r.handlers[protocol.CmdAct(msg.Cmd, msg.Act)]
+	e := r.handlers[gen.CmdAct(msg.Cmd, msg.Act)]
 	r.mu.RUnlock()
 	if e == nil {
 		return fmt.Errorf("route entry not found cmd:%d act:%d", msg.Cmd, msg.Act)
@@ -64,7 +62,7 @@ func (r *Route) Handle(ctx Context, msg *protocol.Message) error {
 
 func (r *Route) Exist(cmd, act uint8) bool {
 	r.mu.RLock()
-	_, ok := r.handlers[protocol.CmdAct(cmd, act)]
+	_, ok := r.handlers[gen.CmdAct(cmd, act)]
 	r.mu.RUnlock()
 	return ok
 }

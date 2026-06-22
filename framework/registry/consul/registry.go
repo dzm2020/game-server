@@ -3,44 +3,31 @@ package consul
 import (
 	"context"
 	"fmt"
+	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
-	"game-server/framework/registry/define"
-	"time"
 
 	"github.com/hashicorp/consul/api"
 	"go.uber.org/zap"
 )
 
-// Config defines Consul client and polling behavior.
-type Config struct {
-	Address           string        `json:"address"`
-	Scheme            string        `json:"scheme"`
-	Token             string        `json:"token"`
-	Datacenter        string        `json:"datacenter"`
-	TTL               time.Duration `json:"ttl"`
-	DeregisterAfter   time.Duration `json:"deregisterAfter"` // 默认值：1m (1分钟)   最小值：1m (1分钟)。Consul 的清理进程每30秒运行一次
-	HeartbeatInterval time.Duration `json:"heartbeatInterval"`
-	HeartbeatNote     string        `json:"heartbeatNote"`
-}
-
-type ServiceInstance = define.ServiceInstance
+type ServiceInstance = gen.ServiceInstance
 
 // Registry aggregates register and discover capabilities.
 type Registry struct {
 	*Registrar
 	*Discoverer
-	cfg Config
+	options *gen.ConsulOptions
 }
 
 // New creates a registry using supplied config.
-func New(cfg Config) (*Registry, error) {
-	client, err := newConsulClient(cfg)
+func New(options *gen.ConsulOptions) (*Registry, error) {
+	client, err := newConsulClient(options)
 	if err != nil {
 		return nil, err
 	}
 
 	registry := &Registry{
-		cfg:        cfg,
+		options:    options,
 		Registrar:  newRegistrar(client),
 		Discoverer: newDiscoverer(client),
 	}
@@ -49,14 +36,14 @@ func New(cfg Config) (*Registry, error) {
 }
 
 func (r *Registry) Register(reg ServiceInstance) error {
-	return r.Registrar.Register(reg, r.cfg)
+	return r.Registrar.Register(reg, r.options)
 }
 
 func (r *Registry) Deregister(serviceID string) error {
 	return r.Registrar.Deregister(serviceID)
 }
 
-func (r *Registry) SetHealthState(serviceID string, state define.HealthState) error {
+func (r *Registry) SetHealthState(serviceID string, state gen.ServiceHealthState) error {
 	return r.Registrar.SetHealthState(serviceID, state)
 }
 
@@ -76,7 +63,7 @@ func (r *Registry) ListServices() ([]string, error) {
 	return r.Discoverer.ListServices()
 }
 
-func (r *Registry) Watch(serviceName string, onChange define.ServiceChangeHandler) (string, error) {
+func (r *Registry) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
 	return r.Discoverer.Watch(serviceName, onChange)
 }
 
@@ -95,19 +82,19 @@ func (r *Registry) Shutdown() {
 //	@param logger
 //	@return *api.Client
 //	@return error
-func newConsulClient(cfg Config) (*api.Client, error) {
+func newConsulClient(options *gen.ConsulOptions) (*api.Client, error) {
 	consulCfg := api.DefaultConfig()
-	if cfg.Address != "" {
-		consulCfg.Address = cfg.Address
+	if options.Address != "" {
+		consulCfg.Address = options.Address
 	}
-	if cfg.Scheme != "" {
-		consulCfg.Scheme = cfg.Scheme
+	if options.Scheme != "" {
+		consulCfg.Scheme = options.Scheme
 	}
-	if cfg.Token != "" {
-		consulCfg.Token = cfg.Token
+	if options.Token != "" {
+		consulCfg.Token = options.Token
 	}
-	if cfg.Datacenter != "" {
-		consulCfg.Datacenter = cfg.Datacenter
+	if options.Datacenter != "" {
+		consulCfg.Datacenter = options.Datacenter
 	}
 
 	client, err := api.NewClient(consulCfg)

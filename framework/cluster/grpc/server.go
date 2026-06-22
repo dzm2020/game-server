@@ -1,4 +1,4 @@
-package cluster
+package grpc_cluster
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 )
 
 // NewNodeServer 创建服务端
-func NewNodeServer(address string, dispatcher IDispatcher) *NodeServer {
+func NewNodeServer(address string, dispatcher Dispatcher) *NodeServer {
 	return &NodeServer{
 		address:    address,
 		dispatcher: dispatcher,
@@ -28,7 +28,7 @@ type NodeServer struct {
 	address    string
 	lis        net.Listener
 	server     *grpc.Server
-	dispatcher IDispatcher
+	dispatcher Dispatcher
 }
 
 func (s *NodeServer) listen() error {
@@ -63,21 +63,26 @@ func (s *NodeServer) Serve() error {
 	if err := s.listen(); err != nil {
 		return err
 	}
-	err := s.server.Serve(s.lis)
-	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-		return err
+	timeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	var err error
+	grs.SafeGo(func() {
+		err = s.server.Serve(s.lis)
+		cancel()
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			glog.Error("节点服务已停止", zap.String("listen_addr", s.address), zap.Error(err))
+			return
+		}
+		glog.Info("节点服务已停止", zap.String("listen_addr", s.address))
+	})
+	select {
+	case <-timeCtx.Done():
 	}
-	glog.Info("节点服务已停止",
-		zap.String("listen_addr", s.address),
-	)
-	return nil
+	return err
 }
 
 // Stream 实现双向流
 func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 	glog.Info("节点流连接已建立")
-
-	// 接收协程
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
@@ -88,9 +93,7 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 			glog.Error("节点流接收失败", zap.Error(err))
 			return err
 		}
-		if err = s.dispatcher.Handler(msg); err != nil {
-			glog.Error("节点流分发失败", zap.Error(err))
-		}
+		return s.dispatcher.Dispatch(msg)
 	}
 }
 

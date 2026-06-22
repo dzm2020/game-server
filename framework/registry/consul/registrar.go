@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
-	"game-server/framework/registry/define"
+	"game-server/framework/pkg/netutil"
 	"strings"
 	"sync"
 	"time"
@@ -34,8 +35,8 @@ type ttlState struct {
 //	@param cfg
 //	@return *Registrar
 //	@return error
-func NewRegistrar(cfg Config) (*Registrar, error) {
-	client, err := newConsulClient(cfg)
+func NewRegistrar(options *gen.ConsulOptions) (*Registrar, error) {
+	client, err := newConsulClient(options)
 	if err != nil {
 		return nil, err
 	}
@@ -63,44 +64,49 @@ func newRegistrar(client *api.Client) *Registrar {
 //	@receiver rr
 //	@param reg
 //	@return error
-func (rr *Registrar) Register(reg ServiceInstance, cfg Config) error {
-	if reg.ID == "" || reg.Name == "" || reg.Address == "" || reg.Port <= 0 {
-		return errors.New("invalid service registration: id/name/address/port are required")
+func (rr *Registrar) Register(reg ServiceInstance, options *gen.ConsulOptions) error {
+	if options == nil {
+		return errors.New("consul options is required")
 	}
-	var check *api.AgentServiceCheck
-	if cfg.TTL > 0 {
-		check = &api.AgentServiceCheck{
-			TTL: cfg.TTL.String(),
-		}
-		if cfg.DeregisterAfter > 0 {
-			check.DeregisterCriticalServiceAfter = cfg.DeregisterAfter.String()
-		} else {
-			check.DeregisterCriticalServiceAfter = "1m"
-		}
+	if reg.ID == "" || reg.Name == "" {
+		return errors.New("invalid service registration: id/name are required")
 	}
+
+	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
+	if err != nil {
+		return err
+	}
+
+	check := &api.AgentServiceCheck{
+		TTL:                            options.TTL.String(),
+		DeregisterCriticalServiceAfter: options.DeregisterAfter.String(),
+	}
+
+	meta := make(map[string]string, len(reg.Meta)+2)
+	for k, v := range reg.Meta {
+		meta[k] = v
+	}
+
+	meta["ext_address"] = reg.ExtAddress
 
 	serviceReg := &api.AgentServiceRegistration{
 		ID:      reg.ID,
 		Name:    reg.Name,
-		Address: reg.Address,
-		Port:    reg.Port,
+		Address: host,
+		Port:    rawPort,
 		Tags:    reg.Tags,
-		Meta:    reg.Meta,
+		Meta:    meta,
 		Check:   check,
 	}
 
-	if err := rr.client.Agent().ServiceRegister(serviceReg); err != nil {
+	if err = rr.client.Agent().ServiceRegister(serviceReg); err != nil {
 		glog.Error("register service failed", zap.String("service_id", reg.ID), zap.Error(err))
-		return fmt.Errorf("register service: %w", err)
+		return err
 	}
 	glog.Info("register service success", zap.String("service_id", reg.ID), zap.String("service_name", reg.Name))
 
-	if cfg.TTL > 0 {
-		note := cfg.HeartbeatNote
-		if note == "" {
-			note = "auto ttl heartbeat"
-		}
-		rr.startTTLHeartbeat(reg.ID, cfg.TTL, cfg.HeartbeatInterval, note)
+	if options.TTL > 0 {
+		rr.startTTLHeartbeat(reg.ID, options.TTL, "")
 	}
 	return nil
 }
@@ -131,7 +137,7 @@ func (rr *Registrar) Deregister(serviceID string) error {
 //	@param serviceID
 //	@param note
 //	@return error
-func (rr *Registrar) SetHealthState(serviceID string, state define.HealthState) error {
+func (rr *Registrar) SetHealthState(serviceID string, state gen.ServiceHealthState) error {
 	if err := rr.setTTLState(serviceID, "", state); err != nil {
 		glog.Error("set ttl pass state failed", zap.String("service_id", serviceID), zap.Error(err))
 		return err
@@ -168,15 +174,10 @@ func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 //	@receiver rr
 //	@param serviceID
 //	@param ttl
-//	@param interval
-//	@param note
-func (rr *Registrar) startTTLHeartbeat(serviceID string, ttl time.Duration, interval time.Duration, note string) {
-	if interval <= 0 {
-		interval = ttl / 2
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
+
+// @param note
+func (rr *Registrar) startTTLHeartbeat(serviceID string, ttl time.Duration, note string) {
+	interval := ttl / 2
 
 	rr.stopTTLHeartbeat(serviceID)
 

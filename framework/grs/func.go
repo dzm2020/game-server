@@ -15,14 +15,16 @@ func SafeGo(fn func()) {
 }
 
 func Try(fn func(), recoverFunc func(e error)) {
-	if rec := recover(); rec != nil {
-		if err, ok := rec.(error); ok {
-			if recoverFunc != nil {
-				recoverFunc(err)
+	defer func() {
+		if rec := recover(); rec != nil {
+			if err, ok := rec.(error); ok {
+				if recoverFunc != nil {
+					recoverFunc(err)
+				}
 			}
+			glog.Error("panic recovered", zap.Any("panic", rec), zap.ByteString("stack", debug.Stack()))
 		}
-		glog.Error("panic recovered", zap.Any("panic", rec), zap.ByteString("stack", debug.Stack()))
-	}
+	}()
 	if fn != nil {
 		fn()
 	}

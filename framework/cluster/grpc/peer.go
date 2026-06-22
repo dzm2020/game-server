@@ -1,9 +1,9 @@
-package cluster
+package grpc_cluster
 
 import (
 	"context"
 	"fmt"
-	"game-server/framework/cluster/define"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"io"
@@ -29,8 +29,8 @@ type PeerConn struct {
 	client NodeServiceClient
 	stream NodeService_StreamClient
 
-	sendCh     chan *define.ClusterMessage
-	dispatcher IDispatcher
+	sendCh     chan *gen.ClusterMessage
+	dispatcher Dispatcher
 	onClosed   func(nodeID string, peer *PeerConn)
 
 	ctx       context.Context
@@ -42,8 +42,8 @@ type PeerConn struct {
 type PeerConfig struct {
 	nodeID     string
 	address    string
-	sendCh     chan *define.ClusterMessage
-	dispatcher IDispatcher
+	sendCh     chan *gen.ClusterMessage
+	dispatcher Dispatcher
 	onClosed   func(nodeID string, peer *PeerConn)
 }
 
@@ -194,7 +194,7 @@ func (p *PeerConn) recvLoop() {
 			return
 
 		}
-		if err = p.dispatcher.Handler(msg); err != nil {
+		if err = p.dispatcher.Dispatch(msg); err != nil {
 			glog.Error("节点消息分发失败",
 				zap.String("node_id", p.nodeID),
 				zap.Error(err),
@@ -203,7 +203,7 @@ func (p *PeerConn) recvLoop() {
 	}
 }
 
-func (p *PeerConn) send(msg *define.ClusterMessage) error {
+func (p *PeerConn) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
 		return fmt.Errorf("peer not connected")
 	}

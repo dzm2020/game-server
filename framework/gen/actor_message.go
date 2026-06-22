@@ -1,4 +1,4 @@
-package protocol
+package gen
 
 const HeadLen = 12
 

@@ -1,14 +1,14 @@
-package cluster
+package grpc_cluster
 
 import (
 	"context"
 	"fmt"
-	"game-server/framework/cluster/define"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
-	"net"
+
 	"slices"
-	"strconv"
+
 	"sync"
 	"time"
 
@@ -16,29 +16,25 @@ import (
 	"go.uber.org/zap"
 )
 
-type IServerInstance interface {
-	GetID() string
-	GetName() string
-	GetAddress() string
-	GetPort() int
+type Options struct {
+	NodeID           string
+	ListenAddr       string
+	PeerSendChanSize int
+	PeerNames        []string
 }
 
-type IDispatcher interface {
-	Handler(message *define.ClusterMessage) error
-}
-
-type IServerList interface {
-	Get() []IServerInstance
+type Dispatcher interface {
+	Dispatch(msg *gen.ClusterMessage) error
 }
 
 // Cluster 集群管理器
 type Cluster struct {
-	cfg *Config
+	options *Options
 
 	peers *maputil.ConcurrentMap[string, *PeerConn]
 
-	dispatcher IDispatcher
-	serverList IServerList
+	invoker gen.ILocalInvoker
+	getter  gen.IServerListGetter
 
 	server *NodeServer
 
@@ -48,32 +44,28 @@ type Cluster struct {
 	closeOnce sync.Once
 }
 
-// Config 集群配置
-type Config struct {
-	NodeID           string
-	ListenAddr       string
-	PeerSendChanSize int // 通道缓冲区大小
-	PeerNames        []string
-}
-
-// NewCluster 创建集群管理器
-func NewCluster(cfg *Config, serverList IServerList, dispatcher IDispatcher) *Cluster {
+func New(options *Options) *Cluster {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Cluster{
-		peers:      maputil.NewConcurrentMap[string, *PeerConn](10),
-		ctx:        ctx,
-		ctxCancel:  cancel,
-		serverList: serverList,
-		cfg:        cfg,
-		dispatcher: dispatcher,
+		peers:     maputil.NewConcurrentMap[string, *PeerConn](10),
+		ctx:       ctx,
+		ctxCancel: cancel,
+		options:   options,
 	}
-	c.server = NewNodeServer(cfg.ListenAddr, c)
+	c.server = NewNodeServer(options.ListenAddr, c)
 
 	glog.Info("集群初始化完成",
 		zap.String("node_id", c.GetSelfID()),
-		zap.String("listen_addr", c.cfg.ListenAddr),
+		zap.String("listen_addr", c.options.ListenAddr),
 	)
 	return c
+}
+func (c *Cluster) SetLocalInvoker(invoker gen.ILocalInvoker) {
+	c.invoker = invoker
+}
+
+func (c *Cluster) SetServerListGetter(getter gen.IServerListGetter) {
+	c.getter = getter
 }
 
 // Run
@@ -83,6 +75,7 @@ func NewCluster(cfg *Config, serverList IServerList, dispatcher IDispatcher) *Cl
 //	@return error
 func (c *Cluster) Run() error {
 	glog.Info("集群启动中", zap.String("node_id", c.GetSelfID()))
+	c.tryConnectPeers()
 	grs.SafeGo(func() {
 		c.connectPeers()
 	})
@@ -91,7 +84,7 @@ func (c *Cluster) Run() error {
 }
 
 func (c *Cluster) connectPeers() {
-	if c.serverList == nil {
+	if c.getter == nil {
 		glog.Warn("未配置注册中心",
 			zap.String("msg", "未配置注册中心，跳过节点发现"),
 			zap.String("node_id", c.GetSelfID()),
@@ -102,7 +95,6 @@ func (c *Cluster) connectPeers() {
 		zap.String("msg", "开始节点发现"),
 		zap.String("node_id", c.GetSelfID()),
 	)
-	c.tryConnectPeers()
 	ticker := time.NewTicker(time.Second * 3)
 	defer ticker.Stop()
 	for {
@@ -119,18 +111,23 @@ func (c *Cluster) connectPeers() {
 	}
 }
 func (c *Cluster) tryConnectPeers() {
-	list := c.serverList.Get()
-	for _, instance := range list {
-		if !slices.Contains(c.cfg.PeerNames, instance.GetName()) {
+	list, _ := c.getter.Get()
+	for name, instances := range list {
+		if !slices.Contains(c.options.PeerNames, name) {
 			continue
 		}
-		c.reconcilePeer(instance)
+		for _, instance := range instances {
+			c.reconcilePeer(instance)
+		}
+		glog.Debug("tryConnectPeers", zap.Any("instances", instances))
 	}
+
+	glog.Debug("tryConnectPeers")
 }
 
-func (c *Cluster) reconcilePeer(ins IServerInstance) {
+func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 	nodeID := ins.GetID()
-	if nodeID == "" || nodeID == c.cfg.NodeID {
+	if nodeID == "" || nodeID == c.options.NodeID {
 		if nodeID == "" {
 			glog.Warn("跳过无效节点实例",
 				zap.String("msg", "服务实例缺少节点ID，跳过"),
@@ -138,7 +135,7 @@ func (c *Cluster) reconcilePeer(ins IServerInstance) {
 		}
 		return
 	}
-	address := net.JoinHostPort(ins.GetAddress(), strconv.Itoa(ins.GetPort()))
+
 	_, ok := c.peers.Get(nodeID)
 	if ok {
 		glog.Debug("节点已存在",
@@ -149,8 +146,8 @@ func (c *Cluster) reconcilePeer(ins IServerInstance) {
 	}
 	peer := NewPeer(&PeerConfig{
 		nodeID:     nodeID,
-		address:    address,
-		sendCh:     make(chan *define.ClusterMessage, c.cfg.PeerSendChanSize),
+		address:    ins.GetRpcAddress(),
+		sendCh:     make(chan *gen.ClusterMessage, c.options.PeerSendChanSize),
 		dispatcher: c,
 		onClosed:   c.onPeerClosed,
 	})
@@ -158,7 +155,7 @@ func (c *Cluster) reconcilePeer(ins IServerInstance) {
 	glog.Info("新增节点连接",
 		zap.String("msg", "已添加节点连接"),
 		zap.String("node_id", nodeID),
-		zap.String("address", address),
+		zap.String("address", ins.GetRpcAddress()),
 	)
 }
 
@@ -181,7 +178,8 @@ func (c *Cluster) onPeerClosed(nodeID string, peer *PeerConn) {
 }
 
 // SendToNode 发送消息到指定节点
-func (c *Cluster) SendToNode(nodeId string, payload []byte) error {
+func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
+	nodeId := to.GetNodeID()
 	peer, exists := c.peers.Get(nodeId)
 	if !exists {
 		glog.Warn("发送失败，目标节点不存在",
@@ -197,8 +195,8 @@ func (c *Cluster) SendToNode(nodeId string, payload []byte) error {
 		return fmt.Errorf("节点未连接: %s", nodeId)
 	}
 
-	msg := define.NewClusterMessage(c.cfg.NodeID, nodeId, payload)
-	if err := peer.send(msg); err != nil {
+	m := NewClusterMessage(from, to, msg)
+	if err := peer.send(m); err != nil {
 		glog.Warn("发送失败，写入节点发送队列异常",
 			zap.String("target_node_id", nodeId),
 			zap.Error(err),
@@ -209,13 +207,13 @@ func (c *Cluster) SendToNode(nodeId string, payload []byte) error {
 }
 
 // Broadcast 广播消息到所有节点
-func (c *Cluster) Broadcast(payload []byte) {
+func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) {
 
 	c.peers.Range(func(nodeID string, peer *PeerConn) bool {
 
-		msg := define.NewClusterMessage(c.cfg.NodeID, nodeID, payload)
+		m := NewClusterMessage(gen.NoSender, to, msg)
 
-		if err := peer.send(msg); err != nil {
+		if err := peer.send(m); err != nil {
 			glog.Warn("广播到节点失败",
 				zap.String("target_node_id", nodeID),
 				zap.Error(err),
@@ -227,18 +225,21 @@ func (c *Cluster) Broadcast(payload []byte) {
 
 // GetSelfID 获取自身节点ID
 func (c *Cluster) GetSelfID() string {
-	return c.cfg.NodeID
+	return c.options.NodeID
 }
 
-func (c *Cluster) Handler(clusterMsg *define.ClusterMessage) error {
-	//from := define.ProtoPIDToActor(clusterMsg.GetSourcePid())
-	//to := define.ProtoPIDToActor(clusterMsg.GetTargetPid())
-	//msg := define.ClusterMessageToProtocol(clusterMsg.GetMessage())
-	if err := c.dispatcher.Handler(clusterMsg); err != nil {
+func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
+	m, _ := gen.Decode(msg.Data)
+	if m == nil {
+		glog.Error("grpc 解包失败", zap.ByteString("data", msg.Data))
+		return fmt.Errorf("decode fail")
+	}
+	to := msg.TargetPid
+	if err := c.invoker.Handler(msg.SourcePid, msg.TargetPid, m); err != nil {
 		glog.Error("grpc 分发消息失败",
-			//zap.String("target_node_id", to.NodeID),
-			//zap.String("target_actor_name", to.ActorName),
-			//zap.Uint64("target_actor_id", to.ActorID),
+			zap.String("target_node_id", to.NodeID),
+			zap.String("target_actor_name", to.ActorName),
+			zap.Uint64("target_actor_id", to.ActorID),
 			zap.Error(err),
 		)
 	}
@@ -267,4 +268,13 @@ func (c *Cluster) Close() {
 			zap.String("node_id", c.GetSelfID()),
 		)
 	})
+}
+
+func NewClusterMessage(from, to *gen.PID, msg *gen.Message) *gen.ClusterMessage {
+	return &gen.ClusterMessage{
+		CreatedAt: time.Now().Unix(),
+		SourcePid: from,
+		TargetPid: to,
+		Data:      gen.Encode(msg),
+	}
 }

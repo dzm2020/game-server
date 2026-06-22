@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
-	"game-server/framework/registry/define"
+	"net"
 	"reflect"
 	"strconv"
 	"sync"
@@ -28,7 +29,7 @@ type Discoverer struct {
 	waitTime time.Duration
 	workers  map[string]context.CancelFunc
 	subMu    sync.RWMutex
-	watchers map[string]map[string]define.ServiceChangeHandler
+	watchers map[string]map[string]gen.ServiceChangeHandler
 	watchSeq uint64
 }
 
@@ -44,13 +45,13 @@ func newDiscoverer(client *api.Client) *Discoverer {
 		cache:    make(map[string][]ServiceInstance),
 		waitTime: 30 * time.Second,
 		workers:  make(map[string]context.CancelFunc),
-		watchers: make(map[string]map[string]define.ServiceChangeHandler),
+		watchers: make(map[string]map[string]gen.ServiceChangeHandler),
 	}
 }
 
 // NewDiscoverer creates a standalone discover-side client.
-func NewDiscoverer(cfg Config) (*Discoverer, error) {
-	client, err := newConsulClient(cfg)
+func NewDiscoverer(options *gen.ConsulOptions) (*Discoverer, error) {
+	client, err := newConsulClient(options)
 	if err != nil {
 		return nil, err
 	}
@@ -103,17 +104,21 @@ func instancesFromEntries(entries []*api.ServiceEntry) []ServiceInstance {
 		if entry == nil || entry.Service == nil {
 			continue
 		}
-		address := entry.Service.Address
-		if address == "" && entry.Node != nil {
-			address = entry.Node.Address
+
+		extAddress := ""
+		if entry.Service.Meta != nil {
+			if v := entry.Service.Meta["ext_address"]; v != "" {
+				extAddress = v
+			}
+
 		}
 		instances = append(instances, ServiceInstance{
-			ID:      entry.Service.ID,
-			Name:    entry.Service.Service,
-			Address: address,
-			Port:    entry.Service.Port,
-			Tags:    entry.Service.Tags,
-			Meta:    entry.Service.Meta,
+			ID:         entry.Service.ID,
+			Name:       entry.Service.Service,
+			ExtAddress: extAddress,
+			RpcAddress: net.JoinHostPort(entry.Service.Address, strconv.Itoa(entry.Service.Port)),
+			Tags:       entry.Service.Tags,
+			Meta:       entry.Service.Meta,
 		})
 	}
 	return instances
@@ -149,7 +154,7 @@ func (d *Discoverer) DiscoverAll() (map[string][]ServiceInstance, error) {
 }
 
 // Watch registers a callback for service instance changes.
-func (d *Discoverer) Watch(serviceName string, onChange define.ServiceChangeHandler) (string, error) {
+func (d *Discoverer) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
 	if serviceName == "" {
 		return "", errors.New("service name is required")
 	}
@@ -160,7 +165,7 @@ func (d *Discoverer) Watch(serviceName string, onChange define.ServiceChangeHand
 	watchID := strconv.FormatUint(atomic.AddUint64(&d.watchSeq, 1), 10)
 	d.subMu.Lock()
 	if d.watchers[serviceName] == nil {
-		d.watchers[serviceName] = make(map[string]define.ServiceChangeHandler)
+		d.watchers[serviceName] = make(map[string]gen.ServiceChangeHandler)
 	}
 	d.watchers[serviceName][watchID] = onChange
 	d.subMu.Unlock()
@@ -280,7 +285,7 @@ func (d *Discoverer) setServiceCache(serviceName string, passing []ServiceInstan
 	d.cacheMu.Unlock()
 
 	added, updated, removed, changed := diffInstances(previous, passing)
-	topology := &define.Topology{
+	topology := &gen.Topology{
 		All:     passing,
 		Added:   added,
 		Updated: updated,
@@ -304,7 +309,7 @@ func (d *Discoverer) removeServiceCache(serviceName string) {
 	delete(d.cache, serviceName)
 	d.cacheMu.Unlock()
 	if hadPrevious && len(previous) > 0 {
-		topology := &define.Topology{
+		topology := &gen.Topology{
 			All:     nil,
 			Added:   nil,
 			Updated: nil,
@@ -432,14 +437,14 @@ func cloneInstances(instances []ServiceInstance) []ServiceInstance {
 //	@param added
 //	@param updated
 //	@param removed
-func (d *Discoverer) notifyWatchers(serviceName string, topology *define.Topology) {
+func (d *Discoverer) notifyWatchers(serviceName string, topology *gen.Topology) {
 	d.subMu.RLock()
 	watches := d.watchers[serviceName]
 	if len(watches) == 0 {
 		d.subMu.RUnlock()
 		return
 	}
-	callbacks := make([]define.ServiceChangeHandler, 0, len(watches))
+	callbacks := make([]gen.ServiceChangeHandler, 0, len(watches))
 	for _, callback := range watches {
 		callbacks = append(callbacks, callback)
 	}
@@ -499,8 +504,8 @@ func diffInstances(prev []ServiceInstance, curr []ServiceInstance) (added []Serv
 func instanceEqual(a ServiceInstance, b ServiceInstance) bool {
 	return a.ID == b.ID &&
 		a.Name == b.Name &&
-		a.Address == b.Address &&
-		a.Port == b.Port &&
+		a.ExtAddress == b.ExtAddress &&
+		a.RpcAddress == b.RpcAddress &&
 		reflect.DeepEqual(a.Tags, b.Tags) &&
 		reflect.DeepEqual(a.Meta, b.Meta)
 }

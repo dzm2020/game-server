@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/duke-git/lancet/v2 v2.3.9
+	github.com/gorilla/websocket v1.5.3
 	github.com/hashicorp/consul/api v1.34.3
 	github.com/spf13/viper v1.21.0
 	go.uber.org/zap v1.28.0

@@ -4,11 +4,11 @@
 // - protoc             v6.30.2
 // source: cluster.proto
 
-package cluster
+package grpc_cluster
 
 import (
 	context "context"
-	"game-server/framework/cluster/define"
+	"game-server/framework/gen"
 
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
@@ -29,7 +29,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeServiceClient interface {
 	// 节点间双向流，复用所有内部通信
-	Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[define.ClusterMessage, define.ClusterMessage], error)
+	Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[gen.ClusterMessage, gen.ClusterMessage], error)
 }
 
 type nodeServiceClient struct {
@@ -40,25 +40,25 @@ func NewNodeServiceClient(cc grpc.ClientConnInterface) NodeServiceClient {
 	return &nodeServiceClient{cc}
 }
 
-func (c *nodeServiceClient) Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[define.ClusterMessage, define.ClusterMessage], error) {
+func (c *nodeServiceClient) Stream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[gen.ClusterMessage, gen.ClusterMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &NodeService_ServiceDesc.Streams[0], NodeService_Stream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[define.ClusterMessage, define.ClusterMessage]{ClientStream: stream}
+	x := &grpc.GenericClientStream[gen.ClusterMessage, gen.ClusterMessage]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NodeService_StreamClient = grpc.BidiStreamingClient[define.ClusterMessage, define.ClusterMessage]
+type NodeService_StreamClient = grpc.BidiStreamingClient[gen.ClusterMessage, gen.ClusterMessage]
 
 // NodeServiceServer is the server API for NodeService service.
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
 type NodeServiceServer interface {
 	// 节点间双向流，复用所有内部通信
-	Stream(grpc.BidiStreamingServer[define.ClusterMessage, define.ClusterMessage]) error
+	Stream(grpc.BidiStreamingServer[gen.ClusterMessage, gen.ClusterMessage]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
 
@@ -69,7 +69,7 @@ type NodeServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedNodeServiceServer struct{}
 
-func (UnimplementedNodeServiceServer) Stream(grpc.BidiStreamingServer[define.ClusterMessage, define.ClusterMessage]) error {
+func (UnimplementedNodeServiceServer) Stream(grpc.BidiStreamingServer[gen.ClusterMessage, gen.ClusterMessage]) error {
 	return status.Error(codes.Unimplemented, "method Stream not implemented")
 }
 func (UnimplementedNodeServiceServer) mustEmbedUnimplementedNodeServiceServer() {}
@@ -94,11 +94,11 @@ func RegisterNodeServiceServer(s grpc.ServiceRegistrar, srv NodeServiceServer) {
 }
 
 func _NodeService_Stream_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(NodeServiceServer).Stream(&grpc.GenericServerStream[define.ClusterMessage, define.ClusterMessage]{ServerStream: stream})
+	return srv.(NodeServiceServer).Stream(&grpc.GenericServerStream[gen.ClusterMessage, gen.ClusterMessage]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type NodeService_StreamServer = grpc.BidiStreamingServer[define.ClusterMessage, define.ClusterMessage]
+type NodeService_StreamServer = grpc.BidiStreamingServer[gen.ClusterMessage, gen.ClusterMessage]
 
 // NodeService_ServiceDesc is the grpc.ServiceDesc for NodeService service.
 // It's only intended for direct use with grpc.RegisterService,

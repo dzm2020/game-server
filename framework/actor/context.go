@@ -1,53 +1,30 @@
 package actor
 
 import (
-	"game-server/framework/protocol"
+	"game-server/framework/gen"
 	"time"
 )
 
-type Responder func(v []byte) error
-
-// Envelope 是投递到 actor mailbox 的消息载体。
-type Envelope struct {
-	Payload *protocol.Message
-	Sender  PID
-	Respond Responder
-}
-
-type Context interface {
-	Self() PID
-	Sender() PID
-	Message() *protocol.Message
-	InitArgs() []any
-	System() *System
-	Done() <-chan struct{}
-	Tell(target any, msg *protocol.Message) error
-	SetAskTimeout(timeout time.Duration)
-	Ask(target any, msg *protocol.Message) ([]byte, error)
-	Respond(v []byte) error
-	Actor() IActor
-}
-
 type actorContext struct {
-	self       PID
+	self       *gen.PID
 	system     *System
 	initArgs   []any
 	done       <-chan struct{}
-	current    Envelope
-	actor      IActor
+	current    gen.ActorEnvelope
+	actor      gen.IActor
 	askTimeout time.Duration
-	route      *Route
+	route      gen.IActorRoute
 }
 
-func (c *actorContext) Self() PID {
+func (c *actorContext) Self() *gen.PID {
 	return c.self
 }
 
-func (c *actorContext) Sender() PID {
+func (c *actorContext) Sender() *gen.PID {
 	return c.current.Sender
 }
 
-func (c *actorContext) Message() *protocol.Message {
+func (c *actorContext) Message() *gen.Message {
 	return c.current.Payload
 }
 
@@ -58,7 +35,7 @@ func (c *actorContext) InitArgs() []any {
 	return append([]any(nil), c.initArgs...)
 }
 
-func (c *actorContext) System() *System {
+func (c *actorContext) System() gen.ISystem {
 	return c.system
 }
 
@@ -66,7 +43,7 @@ func (c *actorContext) Done() <-chan struct{} {
 	return c.done
 }
 
-func (c *actorContext) Tell(target any, msg *protocol.Message) error {
+func (c *actorContext) Tell(target any, msg *gen.Message) error {
 	return c.system.Tell(c.self, target, msg)
 }
 
@@ -74,7 +51,7 @@ func (c *actorContext) SetAskTimeout(timeout time.Duration) {
 	c.askTimeout = timeout
 }
 
-func (c *actorContext) Ask(target any, msg *protocol.Message) ([]byte, error) {
+func (c *actorContext) Ask(target any, msg *gen.Message) ([]byte, error) {
 	return c.system.Ask(c.self, target, msg, c.askTimeout)
 }
 
@@ -84,6 +61,14 @@ func (c *actorContext) Respond(v []byte) error {
 	}
 	return c.current.Respond(v)
 }
-func (c *actorContext) Actor() IActor {
+func (c *actorContext) Actor() gen.IActor {
 	return c.actor
+}
+
+func (c *actorContext) GetRouter() gen.IActorRoute {
+	return c.route
+}
+
+func (c *actorContext) Exit() {
+	c.system.Stop(c.self)
 }

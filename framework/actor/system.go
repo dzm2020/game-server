@@ -3,7 +3,8 @@ package actor
 import (
 	"context"
 	"fmt"
-	"game-server/framework/protocol"
+	"game-server/framework/gen"
+	"game-server/framework/grs"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,15 +12,22 @@ import (
 	"github.com/duke-git/lancet/v2/maputil"
 )
 
-// ISystem 抽象 System 的对外公共能力，便于依赖注入与单元测试替身。
-type ISystem interface {
-	Spawn(handler Handler, opts ...Option) (PID, error)
-	SpawnActor(handler IActor, opts ...Option) (PID, error)
-	Tell(from PID, target any, msg *protocol.Message) error
-	Ask(from PID, target any, msg *protocol.Message, timeout time.Duration) ([]byte, error)
-	SendEnvelope(target any, env Envelope) error
-	Shutdown()
+type messageActorAdapter struct {
+	fn gen.ActorHandler
 }
+
+func (h messageActorAdapter) OnInit(gen.IContext) error { return nil }
+
+func (h messageActorAdapter) OnDestroy(gen.IContext) error { return nil }
+
+func (h messageActorAdapter) OnMessage(ctx gen.IContext) error {
+	if h.fn != nil {
+		h.fn(ctx)
+	}
+	return nil
+}
+
+func (h messageActorAdapter) OnError(gen.IContext, any) error { return nil }
 
 func NewSystem() *System {
 	return NewSystemWithNodeID("")
@@ -32,7 +40,6 @@ func NewSystemWithNodeID(nodeID string) *System {
 	s := &System{
 		processDict: maputil.NewConcurrentMap[uint64, *process](0),
 		nameDict:    maputil.NewConcurrentMap[string, *process](0),
-		deadLetters: make(chan DeadLetter, 1024),
 		nodeID:      nodeID,
 	}
 	s.runCtx, s.cancel = context.WithCancel(context.Background())
@@ -42,7 +49,6 @@ func NewSystemWithNodeID(nodeID string) *System {
 type System struct {
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
-	deadLetters chan DeadLetter
 	nextID      atomic.Uint64
 	closed      atomic.Bool
 	closeOnce   sync.Once
@@ -51,53 +57,54 @@ type System struct {
 	runCtx      context.Context
 	cancel      context.CancelFunc
 	nodeID      string
+	invoker     gen.IRemoteInvoker
 }
 
-var _ ISystem = (*System)(nil)
+func (s *System) SetRemoteInvoker(invoker gen.IRemoteInvoker) {
+	s.invoker = invoker
+}
 
-func (s *System) Spawn(handler Handler, opts ...Option) (PID, error) {
+func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
 	if handler == nil {
-		return NoSender, ErrNilHandler
+		return gen.NoSender, ErrNilHandler
 	}
-	return s.SpawnActor(messageActorAdapter{fn: handler}, opts...)
+	return s.SpawnActor(messageActorAdapter{fn: handler}, opts)
 }
 
-func (s *System) SpawnActor(handler IActor, opts ...Option) (PID, error) {
+func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID, error) {
 	if handler == nil {
-		return NoSender, ErrNilHandler
+		return gen.NoSender, ErrNilHandler
 	}
 
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	if s.closed.Load() {
-		return NoSender, ErrSystemClosed
+		return gen.NoSender, ErrSystemClosed
 	}
-
-	cfg := applyOptions(opts...)
 
 	id := s.nextID.Add(1)
 
-	pid := NewPID(id, cfg.name, s.nodeID)
+	pid := gen.NewPID(id, opts.Name, s.nodeID)
 	runCtx, cancel := context.WithCancel(s.runCtx)
 	proc := &process{
 		system:   s,
 		pid:      pid,
-		mailbox:  make(chan Envelope, cfg.mailboxSize),
-		initArgs: append([]any(nil), cfg.initArgs...),
+		mailbox:  make(chan gen.ActorEnvelope, opts.MailboxSize),
+		initArgs: append([]any(nil), opts.InitArgs...),
 		runCtx:   runCtx,
 		cancel:   cancel,
-		route:    cfg.route,
+		route:    opts.Route,
 	}
 
 	if err := s.addProcess(proc); err != nil {
-		return NoSender, err
+		return gen.NoSender, err
 	}
 
 	s.wg.Add(1)
-	go func() {
+	grs.SafeGo(func() {
 		defer s.wg.Done()
 		proc.run(handler)
-	}()
+	})
 	return pid, nil
 }
 
@@ -121,7 +128,7 @@ func (s *System) removeProcess(proc *process) {
 
 func (s *System) GetProcess(target any) (*process, bool) {
 	switch v := target.(type) {
-	case PID:
+	case *gen.PID:
 		if v.ActorID != 0 {
 			return s.processDict.Get(v.ActorID)
 		}
@@ -136,21 +143,41 @@ func (s *System) GetProcess(target any) (*process, bool) {
 	}
 }
 
-func (s *System) Tell(from PID, target any, msg *protocol.Message) error {
+func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
 	if s.closed.Load() {
 		return ErrSystemClosed
 	}
+	switch to := target.(type) {
+	case *gen.PID:
+		if to.NodeID == s.nodeID {
+			return s.localTell(from, to, msg)
+		} else {
+			return s.remoteTell(from, to, msg)
+		}
+	default:
+		return s.localTell(from, target, msg)
+	}
+}
+
+func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
 	proc, ok := s.GetProcess(target)
 	if !ok {
 		return ErrActorNotFound
 	}
-	return proc.send(Envelope{
+	return proc.send(gen.ActorEnvelope{
 		Payload: msg,
 		Sender:  from,
 	})
 }
 
-func (s *System) Ask(from PID, target any, msg *protocol.Message, timeout time.Duration) ([]byte, error) {
+func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error {
+	if s.invoker == nil {
+		return fmt.Errorf("remote not set")
+	}
+	return s.invoker.Tell(from, to, msg)
+}
+
+func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
 	if s.closed.Load() {
 		return nil, ErrSystemClosed
 	}
@@ -163,7 +190,7 @@ func (s *System) Ask(from PID, target any, msg *protocol.Message, timeout time.D
 	}
 
 	reply := newAskReply()
-	err := proc.send(Envelope{
+	err := proc.send(gen.ActorEnvelope{
 		Payload: msg,
 		Sender:  from,
 		Respond: reply.responder(),
@@ -174,7 +201,7 @@ func (s *System) Ask(from PID, target any, msg *protocol.Message, timeout time.D
 	return reply.wait(timeout)
 }
 
-func (s *System) SendEnvelope(target any, env Envelope) (err error) {
+func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 	if s.closed.Load() {
 		return ErrSystemClosed
 	}
@@ -185,11 +212,18 @@ func (s *System) SendEnvelope(target any, env Envelope) (err error) {
 	return proc.send(env)
 }
 
+func (s *System) Stop(target any) {
+	proc, ok := s.GetProcess(target)
+	if !ok {
+		return
+	}
+	proc.stop()
+}
+
 func (s *System) Shutdown() {
 	s.closeOnce.Do(func() {
 		s.lifecycleMu.Lock()
 		s.closed.Store(true)
-		close(s.deadLetters)
 		s.cancel()
 		s.wg.Wait()
 	})

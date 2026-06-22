@@ -1,6 +1,7 @@
 package actor
 
 import (
+	"game-server/framework/gen"
 	"sync"
 	"time"
 )
@@ -16,7 +17,7 @@ func newAskReply() *askReply {
 	}
 }
 
-func (r *askReply) responder() Responder {
+func (r *askReply) responder() gen.Responder {
 	return func(v []byte) error {
 		r.once.Do(func() {
 			select {

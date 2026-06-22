@@ -2,6 +2,7 @@ package actor
 
 import (
 	"context"
+	"game-server/framework/gen"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,17 +10,17 @@ import (
 
 type process struct {
 	system   *System
-	pid      PID
-	mailbox  chan Envelope
+	pid      *gen.PID
+	mailbox  chan gen.ActorEnvelope
 	initArgs []any
-	route    *Route
+	route    gen.IActorRoute
 	runCtx   context.Context
 	cancel   context.CancelFunc
 	stopped  atomic.Bool
 	once     sync.Once
 }
 
-func (c *process) getPID() PID {
+func (c *process) getPID() *gen.PID {
 	return c.pid
 }
 
@@ -27,7 +28,7 @@ func (c *process) getName() string {
 	return c.pid.ActorName
 }
 
-func (c *process) run(actor IActor) {
+func (c *process) run(actor gen.IActor) {
 	if c.runCtx == nil {
 		c.runCtx = context.Background()
 	}
@@ -58,23 +59,14 @@ func (c *process) run(actor IActor) {
 			return
 		case env := <-c.mailbox:
 			ctx.current = env
-			//if isPoisonPill(env.Payload) {
 			c.invokeWithPanicCallback(ctx, actor, func() error {
-				return actor.OnDestroy(ctx)
-			})
-			return
-			//}
-			c.invokeWithPanicCallback(ctx, actor, func() error {
-				if c.stopped.Load() {
-					return nil
-				}
-				return actor.OnMessage(ctx)
+				return c.onMessage(ctx, actor)
 			})
 		}
 	}
 }
 
-func (c *process) invokeWithPanicCallback(ctx Context, handler IActor, fn func() error) {
+func (c *process) invokeWithPanicCallback(ctx gen.IContext, handler gen.IActor, fn func() error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			defer func() { _ = recover() }()
@@ -86,7 +78,18 @@ func (c *process) invokeWithPanicCallback(ctx Context, handler IActor, fn func()
 	}
 }
 
-func (c *process) send(env Envelope) error {
+func (c *process) onMessage(ctx gen.IContext, actor gen.IActor) error {
+	if c.stopped.Load() {
+		return nil
+	}
+	msg := ctx.Message()
+	if c.route.Exist(msg.Cmd, msg.Act) {
+		return c.route.Handle(ctx, msg)
+	}
+	return actor.OnMessage(ctx)
+}
+
+func (c *process) send(env gen.ActorEnvelope) error {
 	if c.stopped.Load() {
 		return ErrStopped
 	}
