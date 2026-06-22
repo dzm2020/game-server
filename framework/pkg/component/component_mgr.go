@@ -28,6 +28,7 @@ type IManager interface {
 	ComponentCount() int
 	GetComponent(t any) IComponent
 	AddComponent(component IComponent) error
+	Range(fn func(component IComponent))
 }
 
 type Manager struct {
@@ -189,6 +190,13 @@ func (cm *Manager) Stop(ctx context.Context) error {
 		cm.firstStopErr = cm.stopComponents(ctx, components)
 	})
 	return cm.firstStopErr
+}
+
+func (cm *Manager) Range(fn func(component IComponent)) {
+	cm.components.Range(func(key reflect.Type, value IComponent) bool {
+		fn(value)
+		return true
+	})
 }
 
 // stopComponents 停止组件列表（组件列表应该已经是逆序的）

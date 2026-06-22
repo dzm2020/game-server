@@ -70,5 +70,5 @@ func (c *actorContext) GetRouter() gen.IActorRoute {
 }
 
 func (c *actorContext) Exit() {
-	c.system.Stop(c.self)
+	c.system.StopProcess(c.self)
 }

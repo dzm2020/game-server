@@ -121,23 +121,21 @@ func (n *Node) Startup() (err error) {
 	if err = n.Start(context.Background()); err != nil {
 		return err
 	}
+	var names []string
+	n.IManager.Range(func(component component.IComponent) {
+		names = append(names, reflect.TypeOf(component).String())
+	})
 
-	//  todo 补充日志打印节点信息 格式可以组织称这样
-	//  clog.Info("-------------------------------------------------")
-	//	clog.Infof("[nodeID      = %s] application is starting...", a.NodeID())
-	//	clog.Infof("[nodeType    = %s]", a.NodeType())
-	//	clog.Infof("[pid         = %d]", os.Getpid())
-	//	clog.Infof("[startTime   = %s]", a.StartTime())
-	//	clog.Infof("[profilePath = %s]", cprofile.Path())
-	//	clog.Infof("[profileName = %s]", cprofile.Name())
-	//	clog.Infof("[env         = %s]", cprofile.Env())
-	//	clog.Infof("[debug       = %v]", cprofile.Debug())
-	//	clog.Infof("[printLevel  = %s]", cprofile.PrintLevel())
-	//	clog.Infof("[logLevel    = %s]", clog.DefaultLogger.LogLevel)
-	//	clog.Infof("[stackLevel  = %s]", clog.DefaultLogger.StackLevel)
-	//	clog.Infof("[writeFile   = %v]", clog.DefaultLogger.EnableWriteFile)
-	//	clog.Infof("[serializer  = %s]", a.serializer.Name())
-	//	clog.Info("-------------------------------------------------")
+	glog.Info("节点启动信息",
+		zap.String("node_id", n.GetId()),
+		zap.String("node_name", n.GetName()),
+		zap.String("ext_address", n.GetExtAddress()),
+		zap.String("rpc_address", n.GetRpcAddress()),
+		zap.Int("pid", os.Getpid()),
+		zap.Int("component_count", len(n.components)),
+		zap.Strings("peer_names", n.options.RemoteNames),
+		zap.Strings("component", names),
+	)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
