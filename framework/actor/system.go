@@ -215,7 +215,7 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 	return proc.send(env)
 }
 
-func (s *System) Stop(target any) {
+func (s *System) StopProcess(target any) {
 	proc, ok := s.GetProcess(target)
 	if !ok {
 		return

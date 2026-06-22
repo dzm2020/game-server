@@ -26,6 +26,7 @@ type INodeBehavior interface {
 	OnAfterStart(node INode)
 	OnBeforeStop(node INode)
 	OnAfterStop(node INode, stopErr error)
+	OnPanic(node INode, err error)
 }
 
 var _ INodeBehavior = (*BaseNodeBehavior)(nil)
@@ -46,6 +47,8 @@ func (b BaseNodeBehavior) OnBeforeStop(node INode) {
 
 func (b BaseNodeBehavior) OnAfterStop(node INode, stopErr error) {
 }
+
+func (b BaseNodeBehavior) OnPanic(node INode, err error) {}
 
 func RequireComponent[T component.IComponent](node INode, key T) (T, error) {
 	var zero T

@@ -2,7 +2,8 @@ package node
 
 import (
 	"context"
-	compactor "game-server/framework/actor"
+	"errors"
+	"game-server/framework/actor"
 	"game-server/framework/cluster"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/component"
@@ -15,7 +16,18 @@ import (
 	"syscall"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
+
+type panicHook struct {
+	fn func(entry *zapcore.CheckedEntry, fields []zapcore.Field)
+}
+
+func (h panicHook) OnWrite(entry *zapcore.CheckedEntry, fields []zapcore.Field) {
+	if h.fn != nil {
+		h.fn(entry, fields)
+	}
+}
 
 // New creates a node instance.
 func New(options gen.NodeOptions) *Node {
@@ -23,7 +35,7 @@ func New(options gen.NodeOptions) *Node {
 		options:  options,
 		IManager: component.NewComponentsMgr(),
 	}
-	bootstrap(node, &options)
+	node.init(options)
 	return node
 }
 
@@ -31,6 +43,42 @@ type Node struct {
 	options gen.NodeOptions
 	component.IManager
 	components []component.IComponent
+
+	cluster  gen.ICluster
+	system   gen.ISystem
+	registry gen.IRegistry
+}
+
+func (n *Node) init(options gen.NodeOptions) {
+	options = gen.NormalizationNodeOptions(options)
+
+	logOptions := []zap.Option{
+		zap.WithPanicHook(panicHook{
+			fn: func(entry *zapcore.CheckedEntry, fields []zapcore.Field) {
+				n.options.Behavior.OnPanic(n, errors.New(entry.Message))
+			},
+		}),
+		zap.Fields(
+			zap.String("nodeId", options.ID),
+			zap.String("nodeName", options.Name),
+		),
+	}
+
+	glog.Init(options.Logger, logOptions...)
+
+	compRegistry := registry.NewComponent(n)
+
+	compCluster := cluster.NewComponent(n)
+
+	compSystem := actor.NewComponent(n)
+
+	n.AddComponents(compRegistry, compSystem, compCluster)
+
+	n.cluster = compCluster
+	n.registry = compRegistry
+	n.system = compSystem
+
+	n.options.Behavior.OnInit(n)
 }
 
 func (n *Node) GetId() string {
@@ -53,6 +101,18 @@ func (n *Node) GetOptions() *gen.NodeOptions {
 	return &n.options
 }
 
+func (n *Node) GetRegistry() gen.IRegistry {
+	return n.registry
+}
+
+func (n *Node) GetSystem() gen.ISystem {
+	return n.system
+}
+
+func (n *Node) GetCluster() gen.ICluster {
+	return n.cluster
+}
+
 func (n *Node) AddComponents(comps ...component.IComponent) {
 	n.components = append(n.components, comps...)
 }
@@ -61,6 +121,23 @@ func (n *Node) Startup() (err error) {
 	if err = n.Start(context.Background()); err != nil {
 		return err
 	}
+
+	//  todo 补充日志打印节点信息 格式可以组织称这样
+	//  clog.Info("-------------------------------------------------")
+	//	clog.Infof("[nodeID      = %s] application is starting...", a.NodeID())
+	//	clog.Infof("[nodeType    = %s]", a.NodeType())
+	//	clog.Infof("[pid         = %d]", os.Getpid())
+	//	clog.Infof("[startTime   = %s]", a.StartTime())
+	//	clog.Infof("[profilePath = %s]", cprofile.Path())
+	//	clog.Infof("[profileName = %s]", cprofile.Name())
+	//	clog.Infof("[env         = %s]", cprofile.Env())
+	//	clog.Infof("[debug       = %v]", cprofile.Debug())
+	//	clog.Infof("[printLevel  = %s]", cprofile.PrintLevel())
+	//	clog.Infof("[logLevel    = %s]", clog.DefaultLogger.LogLevel)
+	//	clog.Infof("[stackLevel  = %s]", clog.DefaultLogger.StackLevel)
+	//	clog.Infof("[writeFile   = %v]", clog.DefaultLogger.EnableWriteFile)
+	//	clog.Infof("[serializer  = %s]", a.serializer.Name())
+	//	clog.Info("-------------------------------------------------")
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
@@ -108,37 +185,4 @@ func (n *Node) Stop(ctx context.Context) error {
 	glog.Info("节点完成停止", zap.Error(stopErr))
 	_ = glog.Stop()
 	return stopErr
-}
-
-func (n *Node) GetRegistry() gen.IRegistry {
-	comp, err := gen.RequireComponent(n, (*registry.Component)(nil))
-	if err != nil {
-		return nil
-	}
-	if comp.IRegistry == nil {
-		return nil
-	}
-	return comp.IRegistry
-}
-
-func (n *Node) GetSystem() gen.ISystem {
-	comp, err := gen.RequireComponent(n, (*compactor.Component)(nil))
-	if err != nil {
-		return nil
-	}
-	if comp.ISystem == nil {
-		return nil
-	}
-	return comp.ISystem
-}
-
-func (n *Node) GetCluster() gen.ICluster {
-	comp, err := gen.RequireComponent(n, (*cluster.Component)(nil))
-	if err != nil {
-		return nil
-	}
-	if comp.ICluster == nil {
-		return nil
-	}
-	return comp.ICluster
 }

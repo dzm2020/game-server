@@ -22,7 +22,7 @@ type ISystem interface {
 	Tell(from *PID, target any, msg *Message) error
 	Ask(from *PID, target any, msg *Message, timeout time.Duration) ([]byte, error)
 	SendEnvelope(target any, env ActorEnvelope) error
-	Stop(target any)
+	StopProcess(target any)
 	Shutdown()
 }
 
