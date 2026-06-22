@@ -2,7 +2,6 @@ package actor
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"time"
 )
@@ -14,12 +13,12 @@ type RemoteInvoker struct {
 func (r *RemoteInvoker) Tell(from *gen.PID, target *gen.PID, msg *gen.Message) error {
 	cluster := r.node.GetCluster()
 	if cluster == nil {
-		return fmt.Errorf("cluster is nil")
+		return gen.ErrActorClusterNil
 	}
 	return cluster.SendToNode(from, target, msg)
 }
 func (r *RemoteInvoker) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
-	return nil, fmt.Errorf("cluster not implement")
+	return nil, gen.ErrActorClusterAskNotImpl
 }
 
 func NewComponent(node gen.INode) *Component {

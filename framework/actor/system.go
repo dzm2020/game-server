@@ -175,7 +175,7 @@ func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
 
 func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error {
 	if s.invoker == nil {
-		return fmt.Errorf("remote not set")
+		return ErrRemoteNotSet
 	}
 	return s.invoker.Tell(from, to, msg)
 }

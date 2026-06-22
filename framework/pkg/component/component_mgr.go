@@ -18,7 +18,7 @@ var (
 	ErrComponentAlreadyRegistered          = errors.New("组件已注册")
 	ErrManagerAlreadyStarted               = errors.New("管理器已启动")
 	ErrManagerStoppedCannotRestart         = errors.New("管理器已停止，无法重启")
-	ErrFailedToStartComponent              = errors.New("启动组件失败")
+	ErrFailedToStartComponent              = errors.New("组件启动失败")
 )
 
 type IManager interface {
@@ -151,7 +151,7 @@ func (cm *Manager) Start(ctx context.Context) (err error) {
 
 		if err = component.Start(ctx); err != nil {
 			_ = cm.stopComponents(ctx, started)
-			return fmt.Errorf("组件启动失败 type=%s err:%v", key.String(), err)
+			return fmt.Errorf("%w: type=%s err=%v", ErrFailedToStartComponent, key.String(), err)
 		}
 
 		started = append(started, component)

@@ -2,7 +2,7 @@ package network
 
 import (
 	"encoding/json"
-	"errors"
+	"game-server/framework/gen"
 )
 
 // -------------------------------------------
@@ -16,10 +16,10 @@ type Message struct {
 }
 
 var (
-	ErrCodecNotConfigured  = errors.New("codec is not configured")
-	ErrConnectionClosed    = errors.New("connection is closed")
-	ErrTLSCertFileRequired = errors.New("tls cert file is required")
-	ErrTLSKeyFileRequired  = errors.New("tls key file is required")
+	ErrCodecNotConfigured  = gen.ErrCodecNotConfigured
+	ErrConnectionClosed    = gen.ErrConnectionClosed
+	ErrTLSCertFileRequired = gen.ErrTLSCertFileRequired
+	ErrTLSKeyFileRequired  = gen.ErrTLSKeyFileRequired
 )
 
 type IConnection interface {

@@ -44,7 +44,7 @@ func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
 	e := r.handlers[gen.CmdAct(msg.Cmd, msg.Act)]
 	r.mu.RUnlock()
 	if e == nil {
-		return fmt.Errorf("route entry not found cmd:%d act:%d", msg.Cmd, msg.Act)
+		return fmt.Errorf("%w cmd:%d act:%d", gen.ErrActorRouteNotFound, msg.Cmd, msg.Act)
 	}
 
 	var request interface{}

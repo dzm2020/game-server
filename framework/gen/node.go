@@ -53,15 +53,15 @@ func (b BaseNodeBehavior) OnPanic(node INode, err error) {}
 func RequireComponent[T component.IComponent](node INode, key T) (T, error) {
 	var zero T
 	if node == nil {
-		return zero, fmt.Errorf("node 为空")
+		return zero, ErrNodeNil
 	}
 	raw := node.GetComponent(key)
 	if raw == nil {
-		return zero, fmt.Errorf("组件未注册: %T", key)
+		return zero, fmt.Errorf("%w: %T", ErrNodeComponentNotRegistered, key)
 	}
 	typed, ok := raw.(T)
 	if !ok {
-		return zero, fmt.Errorf("组件类型不匹配: key=%T actual=%T", key, raw)
+		return zero, fmt.Errorf("%w: key=%T actual=%T", ErrNodeComponentTypeMismatched, key, raw)
 	}
 	return typed, nil
 }

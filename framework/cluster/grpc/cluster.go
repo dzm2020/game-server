@@ -103,9 +103,9 @@ func (c *Cluster) waitPeersReady(timeout time.Duration) error {
 
 		select {
 		case <-c.ctx.Done():
-			return fmt.Errorf("grpc集群关闭")
+			return gen.ErrClusterClosed
 		case <-deadline.C:
-			return fmt.Errorf("等待远程连接超时: connected=%d total=%d", connected, total)
+			return fmt.Errorf("%w: connected=%d total=%d", gen.ErrClusterWaitPeerReadyTimeout, connected, total)
 		case <-ticker.C:
 		}
 	}
@@ -198,18 +198,18 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 	nodeId := to.GetNodeID()
 	peer, exists := c.peers.Get(nodeId)
 	if !exists {
-		err := fmt.Errorf("节点不存在: %s", nodeId)
+		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotFound, nodeId)
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
 		return err
 	}
 	_, ok := c.discovery.GetInstance(nodeId)
 	if !ok {
-		err := fmt.Errorf("节点不在服务列表: %s", nodeId)
+		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotInServiceList, nodeId)
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
 		return err
 	}
 	if !peer.IsConnected() {
-		err := fmt.Errorf("节点未连接: %s", nodeId)
+		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotConnected, nodeId)
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId))
 		return err
 	}
@@ -247,7 +247,7 @@ func (c *Cluster) GetSelfID() string {
 func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 	m, _ := gen.Decode(msg.Data)
 	if m == nil {
-		err := fmt.Errorf("decode fail")
+		err := gen.ErrClusterDecodeFailed
 		glog.Error("grpc集群接受处理消息", zap.ByteString("data", msg.Data), zap.Error(err))
 		return err
 	}

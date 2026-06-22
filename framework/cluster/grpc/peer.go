@@ -3,7 +3,6 @@ package grpc_cluster
 import (
 	"context"
 	"errors"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
@@ -200,14 +199,14 @@ func (p *PeerConn) recvLoop() {
 
 func (p *PeerConn) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
-		err := fmt.Errorf("peer not connected")
+		err := gen.ErrClusterPeerNotConnected
 		glog.Error("grpc远程节点发送队列写入失败", zap.String("target_node_id", p.nodeID), zap.Error(err))
 		return err
 	}
 	select {
 	case p.sendCh <- msg:
 	default:
-		err := fmt.Errorf("send_channel_full")
+		err := gen.ErrClusterSendChannelFull
 		glog.Error("grpc远程节点发送队列写入失败", zap.String("target_node_id", p.nodeID), zap.Error(err))
 		return err
 	}

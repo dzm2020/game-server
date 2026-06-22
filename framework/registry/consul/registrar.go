@@ -2,7 +2,6 @@ package consul
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
@@ -52,7 +51,7 @@ func newRegistrar(client *api.Client) *Registrar {
 func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) error {
 	if reg.ID == "" || reg.Name == "" {
 		glog.Error("Consul注册服务实例", zap.String("service_name", reg.Name), zap.String("service_id", reg.ID))
-		return errors.New("invalid service registration: id/name are required")
+		return fmt.Errorf("%w: id/name are required", gen.ErrConsulInvalidServiceReg)
 	}
 
 	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
@@ -108,7 +107,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 //	@return error
 func (rr *Registrar) Deregister(serviceID string) error {
 	if serviceID == "" {
-		return errors.New("service id is required")
+		return gen.ErrConsulServiceIDRequired
 	}
 	if err := rr.client.Agent().ServiceDeregister(serviceID); err != nil {
 		glog.Error("deregister service failed", zap.String("service_id", serviceID), zap.Error(err))
@@ -146,7 +145,7 @@ func (rr *Registrar) SetHealthState(serviceID string, state gen.ServiceHealthSta
 func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 	if serviceID == "" {
 		glog.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note))
-		return errors.New("service id is required")
+		return gen.ErrConsulServiceIDRequired
 	}
 	checkID := serviceID
 	if !strings.HasPrefix(checkID, "service:") {
@@ -244,14 +243,14 @@ func (rr *Registrar) stopTTLHeartbeat(serviceID string) {
 func (rr *Registrar) setTTLState(serviceID, note, status string) error {
 	if serviceID == "" {
 		glog.Error("更新内存中的TTL状态", zap.String("service_id", serviceID))
-		return errors.New("service id is required")
+		return gen.ErrConsulServiceIDRequired
 	}
 	rr.ttlMu.Lock()
 	_, ok := rr.ttlCancels[serviceID]
 	if !ok {
 		rr.ttlMu.Unlock()
 		glog.Error("更新内存中的TTL状态", zap.String("service_id", serviceID), zap.String("reason", "服务不存在"))
-		return fmt.Errorf("ttl heartbeat not running for %q", serviceID)
+		return fmt.Errorf("%w: %q", gen.ErrConsulTTLHeartbeatNotRun, serviceID)
 	}
 	current := rr.ttlStates[serviceID]
 	current.status = status

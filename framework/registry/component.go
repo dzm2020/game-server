@@ -2,7 +2,6 @@ package registry
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry/consul"
@@ -45,7 +44,7 @@ func (c *Component) Init() error {
 
 func (c *Component) Start(ctx context.Context) error {
 	if c.IRegistry == nil {
-		return fmt.Errorf("registry 为空")
+		return gen.ErrRegistryNil
 	}
 
 	c.runMu.Lock()

@@ -2,7 +2,6 @@ package cluster
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
@@ -17,7 +16,7 @@ type LocalInvoker struct {
 func (l *LocalInvoker) Handler(from *gen.PID, target *gen.PID, msg *gen.Message) error {
 	system := l.node.GetSystem()
 	if system == nil {
-		err := fmt.Errorf("system is nil")
+		err := gen.ErrClusterSystemNil
 		glog.Error("集群消息分发失败", zap.Error(err))
 		return err
 	}
@@ -62,7 +61,7 @@ func (c *Component) Init() error {
 
 func (c *Component) Start(ctx context.Context) error {
 	if c.ICluster == nil {
-		return fmt.Errorf("cluster 为空")
+		return gen.ErrClusterNil
 	}
 	if err := c.ICluster.Run(); err != nil {
 		glog.Error("集群组件运行", zap.Error(err))
