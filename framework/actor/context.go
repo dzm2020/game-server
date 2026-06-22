@@ -24,10 +24,6 @@ func (c *actorContext) Sender() *gen.PID {
 	return c.current.Sender
 }
 
-func (c *actorContext) Message() *gen.Message {
-	return c.current.Payload
-}
-
 func (c *actorContext) InitArgs() []any {
 	if len(c.initArgs) == 0 {
 		return nil

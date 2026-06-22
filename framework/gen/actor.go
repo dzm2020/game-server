@@ -9,7 +9,7 @@ import (
 type Responder func(v []byte) error
 
 type ActorEnvelope struct {
-	Payload *Message
+	Payload any
 	Sender  *PID
 	Respond Responder
 }
@@ -38,7 +38,6 @@ type IActor interface {
 type IContext interface {
 	Self() *PID
 	Sender() *PID
-	Message() *Message
 	InitArgs() []any
 	System() ISystem
 	Done() <-chan struct{}

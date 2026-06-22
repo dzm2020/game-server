@@ -3,6 +3,7 @@ package actor
 import (
 	"context"
 	"game-server/framework/gen"
+	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,9 @@ import (
 
 	"go.uber.org/zap"
 )
+
+type stopEnvelopeMessage struct {
+}
 
 type process struct {
 	system   *System
@@ -19,6 +23,7 @@ type process struct {
 	route    gen.IActorRoute
 	runCtx   context.Context
 	cancel   context.CancelFunc
+	stopping atomic.Bool
 	stopped  atomic.Bool
 	once     sync.Once
 }
@@ -65,7 +70,7 @@ func (c *process) run(actor gen.IActor) {
 		case env := <-c.mailbox:
 			ctx.current = env
 			c.invokeWithPanicCallback(ctx, actor, func() error {
-				return c.onMessage(ctx, actor)
+				return c.onMessage(ctx, actor, env)
 			})
 		}
 	}
@@ -84,20 +89,22 @@ func (c *process) invokeWithPanicCallback(ctx gen.IContext, handler gen.IActor, 
 	}
 }
 
-func (c *process) onMessage(ctx gen.IContext, actor gen.IActor) error {
-	if c.stopped.Load() {
-		glog.Error("actor处理消息失败", zap.String("pid", c.pid.String()))
-		return nil
+func (c *process) onMessage(ctx gen.IContext, actor gen.IActor, env gen.ActorEnvelope) error {
+	switch msg := env.Payload.(type) {
+	case *stopEnvelopeMessage:
+		return actor.OnDestroy(ctx)
+	case *gen.Message:
+		if c.route.Exist(msg.Cmd, msg.Act) {
+			return c.route.Handle(ctx, msg)
+		}
+		return actor.OnMessage(ctx)
+	default:
+		return actor.OnMessage(ctx)
 	}
-	msg := ctx.Message()
-	if c.route.Exist(msg.Cmd, msg.Act) {
-		return c.route.Handle(ctx, msg)
-	}
-	return actor.OnMessage(ctx)
 }
 
 func (c *process) send(env gen.ActorEnvelope) error {
-	if c.stopped.Load() {
+	if c.stopped.Load() || c.stopping.Load() {
 		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrStopped))
 		return ErrStopped
 	}
@@ -107,6 +114,31 @@ func (c *process) send(env gen.ActorEnvelope) error {
 	default:
 		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrMailboxFull))
 		return ErrMailboxFull
+	}
+}
+
+func (c *process) requestStop() {
+	if c.stopped.Load() {
+		return
+	}
+	if !c.stopping.CompareAndSwap(false, true) {
+		return
+	}
+	stopEnv := gen.ActorEnvelope{
+		Payload: &stopEnvelopeMessage{},
+		Sender:  gen.NoSender,
+	}
+
+	select {
+	case c.mailbox <- stopEnv:
+	default:
+		// 邮箱满时异步重试，保证终止消息最终入队。
+		grs.SafeGo(func() {
+			select {
+			case c.mailbox <- stopEnv:
+			case <-c.runCtx.Done():
+			}
+		})
 	}
 }
 

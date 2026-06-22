@@ -8,6 +8,7 @@ import (
 var _ gen.INodeBehavior = (*Behavior)(nil)
 
 type Behavior struct {
+	gen.BaseNodeBehavior
 }
 
 func (b Behavior) OnInit(node gen.INode) {

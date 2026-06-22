@@ -127,8 +127,6 @@ func (n *Node) Startup() (err error) {
 	})
 
 	glog.Info("节点启动信息",
-		zap.String("node_id", n.GetId()),
-		zap.String("node_name", n.GetName()),
 		zap.String("ext_address", n.GetExtAddress()),
 		zap.String("rpc_address", n.GetRpcAddress()),
 		zap.Int("pid", os.Getpid()),

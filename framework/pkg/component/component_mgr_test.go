@@ -41,8 +41,8 @@ func TestManager_RegisterAndGetByType(t *testing.T) {
 	events := make([]string, 0)
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 
-	if err := mgr.Register(c1); err != nil {
-		t.Fatalf("Register failed: %v", err)
+	if err := mgr.AddComponent(c1); err != nil {
+		t.Fatalf("AddComponent failed: %v", err)
 	}
 	if got := mgr.ComponentCount(); got != 1 {
 		t.Fatalf("ComponentCount mismatch, got=%d want=1", got)
@@ -57,26 +57,26 @@ func TestManager_RegisterAndGetByType(t *testing.T) {
 	}
 }
 
-func TestManager_RegisterErrors(t *testing.T) {
+func TestManager_AddComponentErrors(t *testing.T) {
 	mgr := NewComponentsMgr()
 	events := make([]string, 0)
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 
-	if err := mgr.Register(nil); !errors.Is(err, ErrComponentCannotBeNil) {
-		t.Fatalf("Register(nil) error mismatch, got=%v", err)
+	if err := mgr.AddComponent(nil); !errors.Is(err, ErrComponentCannotBeNil) {
+		t.Fatalf("AddComponent(nil) error mismatch, got=%v", err)
 	}
-	if err := mgr.Register(c1); err != nil {
-		t.Fatalf("Register first component failed: %v", err)
+	if err := mgr.AddComponent(c1); err != nil {
+		t.Fatalf("AddComponent first component failed: %v", err)
 	}
-	if err := mgr.Register(c1); !errors.Is(err, ErrComponentAlreadyRegistered) {
-		t.Fatalf("duplicate Register error mismatch, got=%v", err)
+	if err := mgr.AddComponent(c1); !errors.Is(err, ErrComponentAlreadyRegistered) {
+		t.Fatalf("duplicate AddComponent error mismatch, got=%v", err)
 	}
 
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	if err := mgr.Register(&recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events}}); !errors.Is(err, ErrCannotRegisterComponentAfterStarted) {
-		t.Fatalf("Register after started error mismatch, got=%v", err)
+	if err := mgr.AddComponent(&recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events}}); !errors.Is(err, ErrCannotRegisterComponentAfterStarted) {
+		t.Fatalf("AddComponent after started error mismatch, got=%v", err)
 	}
 }
 
@@ -86,11 +86,11 @@ func TestManager_StartInitOrderAndCannotRestart(t *testing.T) {
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 	c2 := &recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events}}
 
-	if err := mgr.Register(c1); err != nil {
-		t.Fatalf("Register c1 failed: %v", err)
+	if err := mgr.AddComponent(c1); err != nil {
+		t.Fatalf("AddComponent c1 failed: %v", err)
 	}
-	if err := mgr.Register(c2); err != nil {
-		t.Fatalf("Register c2 failed: %v", err)
+	if err := mgr.AddComponent(c2); err != nil {
+		t.Fatalf("AddComponent c2 failed: %v", err)
 	}
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -111,8 +111,8 @@ func TestManager_StartRollbackOnFailure(t *testing.T) {
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 	c2 := &recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events, startErr: errors.New("boom")}}
 
-	_ = mgr.Register(c1)
-	_ = mgr.Register(c2)
+	_ = mgr.AddComponent(c1)
+	_ = mgr.AddComponent(c2)
 	err := mgr.Start(context.Background())
 	if err == nil {
 		t.Fatal("Start should fail when one component start returns error")
@@ -131,8 +131,8 @@ func TestManager_StopReverseOrderAndIdempotent(t *testing.T) {
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 	c2 := &recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events}}
 
-	_ = mgr.Register(c1)
-	_ = mgr.Register(c2)
+	_ = mgr.AddComponent(c1)
+	_ = mgr.AddComponent(c2)
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -160,8 +160,8 @@ func TestManager_StopReturnsLastError(t *testing.T) {
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events, stopErr: err1}}
 	c2 := &recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events, stopErr: err2}}
 
-	_ = mgr.Register(c1)
-	_ = mgr.Register(c2)
+	_ = mgr.AddComponent(c1)
+	_ = mgr.AddComponent(c2)
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestManager_StartAfterStoppedRejected(t *testing.T) {
 	events := make([]string, 0)
 	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
 
-	_ = mgr.Register(c1)
+	_ = mgr.AddComponent(c1)
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

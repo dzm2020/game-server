@@ -220,12 +220,11 @@ func (s *System) StopProcess(target any) {
 	if !ok {
 		return
 	}
-	proc.stop()
+	proc.requestStop()
 }
 
 func (s *System) Shutdown() {
 	s.closeOnce.Do(func() {
-		s.lifecycleMu.Lock()
 		s.closed.Store(true)
 		s.cancel()
 		s.wg.Wait()
