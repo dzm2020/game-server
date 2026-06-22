@@ -3,9 +3,12 @@ package actor
 import (
 	"context"
 	"game-server/framework/gen"
+	"game-server/framework/pkg/glog"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type process struct {
@@ -46,6 +49,8 @@ func (c *process) run(actor gen.IActor) {
 		route:      c.route,
 	}
 
+	glog.Info("actor启动", zap.String("pid", c.pid.String()))
+
 	c.invokeWithPanicCallback(ctx, actor, func() error {
 		return actor.OnInit(ctx)
 	})
@@ -75,11 +80,13 @@ func (c *process) invokeWithPanicCallback(ctx gen.IContext, handler gen.IActor, 
 	}()
 	if err := fn(); err != nil {
 		_ = handler.OnError(ctx, err)
+		glog.Error("actor处理消息错误", zap.String("pid", c.pid.String()), zap.Error(err))
 	}
 }
 
 func (c *process) onMessage(ctx gen.IContext, actor gen.IActor) error {
 	if c.stopped.Load() {
+		glog.Error("actor处理消息失败", zap.String("pid", c.pid.String()))
 		return nil
 	}
 	msg := ctx.Message()
@@ -91,12 +98,14 @@ func (c *process) onMessage(ctx gen.IContext, actor gen.IActor) error {
 
 func (c *process) send(env gen.ActorEnvelope) error {
 	if c.stopped.Load() {
+		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrStopped))
 		return ErrStopped
 	}
 	select {
 	case c.mailbox <- env:
 		return nil
 	default:
+		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrMailboxFull))
 		return ErrMailboxFull
 	}
 }
@@ -108,5 +117,6 @@ func (c *process) stop() {
 		if c.cancel != nil {
 			c.cancel()
 		}
+		glog.Info("actor关闭", zap.String("pid", c.pid.String()))
 	})
 }

@@ -3,7 +3,6 @@ package node
 import (
 	"game-server/framework/actor"
 	"game-server/framework/cluster"
-	"game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry"
@@ -22,13 +21,7 @@ func bootstrap(node *Node, options *gen.NodeOptions) {
 
 	compRegistry := registry.NewComponent(node)
 
-	grpcOpt := &grpc_cluster.Options{
-		NodeID:           options.ID,
-		ListenAddr:       options.RpcAddress,
-		PeerSendChanSize: options.Grpc.PeerSendChanSize,
-		PeerNames:        options.RemoteNames,
-	}
-	compCluster := cluster.NewComponent(node, grpc_cluster.New(grpcOpt))
+	compCluster := cluster.NewComponent(node)
 
 	compSystem := actor.NewComponent(node)
 

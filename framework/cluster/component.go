@@ -45,30 +45,34 @@ func (c *Component) Init() error {
 	options := c.node.GetOptions()
 	c.ICluster = options.Cluster
 	if c.ICluster != nil {
-		return nil
-	}
 
-	grpcOpt := &grpc_cluster.Options{
-		NodeID:           options.ID,
-		ListenAddr:       options.RpcAddress,
-		PeerSendChanSize: options.Grpc.PeerSendChanSize,
-		PeerNames:        options.RemoteNames,
-	}
-	c.ICluster = grpc_cluster.New(grpcOpt)
+	} else {
+		grpcOpt := &grpc_cluster.Options{
+			NodeID:           options.ID,
+			ListenAddr:       options.RpcAddress,
+			PeerSendChanSize: options.Grpc.PeerSendChanSize,
+			PeerNames:        options.RemoteNames,
+		}
+		c.ICluster = grpc_cluster.New(grpcOpt)
 
-	c.ICluster.SetLocalInvoker(&LocalInvoker{node: c.node})
-	c.ICluster.SetDiscovery(c.node.GetRegistry())
-	glog.Info("集群组件启动")
+		c.ICluster.SetLocalInvoker(&LocalInvoker{node: c.node})
+		c.ICluster.SetDiscovery(c.node.GetRegistry())
+	}
+	glog.Info("集群组件启动成功")
 	return nil
 }
 
 func (c *Component) Start(ctx context.Context) error {
-	glog.Info("集群组件运行")
-	return c.ICluster.Run()
+	if err := c.ICluster.Run(); err != nil {
+		glog.Error("集群组件运行", zap.Error(err))
+		return err
+	}
+	glog.Info("集群组件运行成功")
+	return nil
 }
 
 func (c *Component) Stop(ctx context.Context) error {
-	glog.Info("集群组件停止")
 	c.ICluster.Close()
+	glog.Info("集群组件停止成功")
 	return nil
 }
