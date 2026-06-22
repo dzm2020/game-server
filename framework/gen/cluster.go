@@ -10,12 +10,8 @@ type IClusterComp interface {
 type ICluster interface {
 	Run() error
 	SetLocalInvoker(invoker ILocalInvoker)
-	SetServerListGetter(getter IServerListGetter)
+	SetDiscovery(discovery IDiscovery)
 	SendToNode(from, to *PID, msg *Message) error
 	Broadcast(to *PID, msg *Message)
 	Close()
-}
-
-type IServerListGetter interface {
-	Get() (map[string][]ServiceInstance, error)
 }

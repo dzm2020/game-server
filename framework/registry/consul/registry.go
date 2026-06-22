@@ -2,7 +2,6 @@ package consul
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 
@@ -16,22 +15,30 @@ type ServiceInstance = gen.ServiceInstance
 type Registry struct {
 	*Registrar
 	*Discoverer
-	options *gen.ConsulOptions
+	options gen.ConsulOptions
 }
 
 // New creates a registry using supplied config.
-func New(options *gen.ConsulOptions) (*Registry, error) {
-	client, err := newConsulClient(options)
+func New(options gen.ConsulOptions) (*Registry, error) {
+	options = normalization(options)
+	config := toConsulConfig(options)
+
+	client, err := api.NewClient(config)
 	if err != nil {
+		glog.Error("consul新建客户端", zap.Error(err))
 		return nil, err
 	}
-
 	registry := &Registry{
 		options:    options,
 		Registrar:  newRegistrar(client),
 		Discoverer: newDiscoverer(client),
 	}
-	glog.Info("consul registry initialized")
+	glog.Info("consul初始化",
+		zap.String("address", options.Address),
+		zap.String("scheme", options.Scheme),
+		zap.String("token", options.Token),
+		zap.Duration("ttl", options.TTL),
+		zap.Duration("deregisterAfter", options.DeregisterAfter))
 	return registry, nil
 }
 
@@ -51,15 +58,15 @@ func (r *Registry) Run(ctx context.Context) error {
 	return r.Discoverer.Run(ctx)
 }
 
-func (r *Registry) Discover(serviceName string) ([]ServiceInstance, error) {
+func (r *Registry) Discover(serviceName string) []ServiceInstance {
 	return r.Discoverer.Discover(serviceName)
 }
 
-func (r *Registry) DiscoverAll() (map[string][]ServiceInstance, error) {
+func (r *Registry) DiscoverAll() map[string][]ServiceInstance {
 	return r.Discoverer.DiscoverAll()
 }
 
-func (r *Registry) ListServices() ([]string, error) {
+func (r *Registry) ListServices() []string {
 	return r.Discoverer.ListServices()
 }
 
@@ -73,35 +80,4 @@ func (r *Registry) Unwatch(serviceName, watchID string) {
 
 func (r *Registry) Shutdown() {
 
-}
-
-// newConsulClient
-//
-//	@Description: 基于配置创建 Consul API 客户端
-//	@param cfg
-//	@param logger
-//	@return *api.Client
-//	@return error
-func newConsulClient(options *gen.ConsulOptions) (*api.Client, error) {
-	consulCfg := api.DefaultConfig()
-	if options.Address != "" {
-		consulCfg.Address = options.Address
-	}
-	if options.Scheme != "" {
-		consulCfg.Scheme = options.Scheme
-	}
-	if options.Token != "" {
-		consulCfg.Token = options.Token
-	}
-	if options.Datacenter != "" {
-		consulCfg.Datacenter = options.Datacenter
-	}
-
-	client, err := api.NewClient(consulCfg)
-	if err != nil {
-		glog.Error("create consul client failed", zap.Error(err))
-		return nil, fmt.Errorf("create consul client: %w", err)
-	}
-	glog.Info("create consul client success", zap.String("address", consulCfg.Address))
-	return client, nil
 }

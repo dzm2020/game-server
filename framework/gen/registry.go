@@ -45,16 +45,22 @@ const (
 
 // IRegistry 定义 Registry 对外能力，便于依赖倒置与单测替身注入。
 type IRegistry interface {
+	IDiscovery
+	IRegistrar
 	Run(ctx context.Context) error
+	Shutdown()
+}
 
+type IRegistrar interface {
 	Register(reg ServiceInstance) error
 	Deregister(serviceID string) error
 	SetHealthState(serviceID, state ServiceHealthState) error
+}
 
-	Discover(serviceName string) ([]ServiceInstance, error)
-	DiscoverAll() (map[string][]ServiceInstance, error)
-	ListServices() ([]string, error)
+type IDiscovery interface {
+	Discover(serviceName string) []ServiceInstance
+	DiscoverAll() map[string][]ServiceInstance
+	ListServices() []string
 	Watch(serviceName string, onChange ServiceChangeHandler) (string, error)
 	Unwatch(serviceName, watchID string)
-	Shutdown()
 }

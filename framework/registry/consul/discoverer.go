@@ -3,7 +3,6 @@ package consul
 import (
 	"context"
 	"errors"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
@@ -49,32 +48,18 @@ func newDiscoverer(client *api.Client) *Discoverer {
 	}
 }
 
-// NewDiscoverer creates a standalone discover-side client.
-func NewDiscoverer(options *gen.ConsulOptions) (*Discoverer, error) {
-	client, err := newConsulClient(options)
-	if err != nil {
-		return nil, err
-	}
-	glog.Info("consul discoverer initialized")
-	return newDiscoverer(client), nil
-}
-
 // Discover returns service instances from Consul health API.
-func (d *Discoverer) Discover(serviceName string) ([]ServiceInstance, error) {
+func (d *Discoverer) Discover(serviceName string) []ServiceInstance {
 	if serviceName == "" {
-		return nil, errors.New("service name is required")
+		return nil
 	}
-	if instances, ok := d.getCache(serviceName); ok {
-		return instances, nil
-	}
-	err := fmt.Errorf("discover cache miss for %q, start sync first", serviceName)
-	glog.Error("discover service failed", zap.String("service_name", serviceName), zap.Error(err))
-	return nil, err
+	instances, _ := d.getCache(serviceName)
+	return instances
 }
 
 // queryServiceEntries
 //
-//	@Description: 从 Consul 拉取指定服务的健康实例条目
+//	@Description: 从Consul拉取指定服务的健康实例条目
 //	@receiver d
 //	@param serviceName
 //	@param q
@@ -83,83 +68,52 @@ func (d *Discoverer) Discover(serviceName string) ([]ServiceInstance, error) {
 //	@return error
 func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions) ([]*api.ServiceEntry, *api.QueryMeta, error) {
 	if serviceName == "" {
-		return nil, nil, errors.New("service name is required")
+		return nil, nil, nil
 	}
-
 	entries, meta, err := d.client.Health().Service(serviceName, "", true, q)
 	if err != nil {
-		return nil, nil, fmt.Errorf("discover service %q: %w", serviceName, err)
+		glog.Error("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Error(err))
+		return nil, nil, err
 	}
+	glog.Debug("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Int("count", len(entries)))
 	return entries, meta, nil
 }
 
-// instancesFromEntries
-//
-//	@Description: 将 Consul ServiceEntry 列表转换为统一的 ServiceInstance 列表
-//	@param entries
-//	@return []ServiceInstance
-func instancesFromEntries(entries []*api.ServiceEntry) []ServiceInstance {
-	instances := make([]ServiceInstance, 0, len(entries))
-	for _, entry := range entries {
-		if entry == nil || entry.Service == nil {
-			continue
-		}
-
-		extAddress := ""
-		if entry.Service.Meta != nil {
-			if v := entry.Service.Meta["ext_address"]; v != "" {
-				extAddress = v
-			}
-
-		}
-		instances = append(instances, ServiceInstance{
-			ID:         entry.Service.ID,
-			Name:       entry.Service.Service,
-			ExtAddress: extAddress,
-			RpcAddress: net.JoinHostPort(entry.Service.Address, strconv.Itoa(entry.Service.Port)),
-			Tags:       entry.Service.Tags,
-			Meta:       entry.Service.Meta,
-		})
-	}
-	return instances
-}
-
 // ListServices returns all registered service names.
-func (d *Discoverer) ListServices() ([]string, error) {
+func (d *Discoverer) ListServices() []string {
 	d.cacheMu.RLock()
 	defer d.cacheMu.RUnlock()
 	names := make([]string, len(d.names))
 	copy(names, d.names)
-	return names, nil
+	return names
 }
 
 // DiscoverAll returns discovered instances grouped by service name.
-func (d *Discoverer) DiscoverAll() (map[string][]ServiceInstance, error) {
-	names, err := d.ListServices()
-	if err != nil {
-		return nil, err
-	}
+func (d *Discoverer) DiscoverAll() map[string][]ServiceInstance {
+	names := d.ListServices()
 
 	all := make(map[string][]ServiceInstance, len(names))
 	for _, name := range names {
-		instances, discoverErr := d.Discover(name)
-		if discoverErr != nil {
-			// 高可用策略: 单个服务缓存未就绪或读取失败时跳过，返回当前可用数据。
-			glog.Warn("discover all partial failure", zap.String("service_name", name), zap.Error(discoverErr))
-			continue
-		}
+		instances := d.Discover(name)
 		all[name] = instances
 	}
-	return all, nil
+	return all
 }
 
-// Watch registers a callback for service instance changes.
+// Watch
+//
+//	@Description: 监控服务
+//	@receiver d
+//	@param serviceName
+//	@param onChange
+//	@return string
+//	@return error
 func (d *Discoverer) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
 	if serviceName == "" {
-		return "", errors.New("service name is required")
+		return "", nil
 	}
 	if onChange == nil {
-		return "", errors.New("onChange callback is required")
+		return "", nil
 	}
 
 	watchID := strconv.FormatUint(atomic.AddUint64(&d.watchSeq, 1), 10)
@@ -169,11 +123,16 @@ func (d *Discoverer) Watch(serviceName string, onChange gen.ServiceChangeHandler
 	}
 	d.watchers[serviceName][watchID] = onChange
 	d.subMu.Unlock()
-	glog.Info("service watch registered", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
+	glog.Info("监控服务", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
 	return watchID, nil
 }
 
-// Unwatch removes one registered callback by serviceName and watchID.
+// Unwatch
+//
+//	@Description: 移除服务监控
+//	@receiver d
+//	@param serviceName
+//	@param watchID
 func (d *Discoverer) Unwatch(serviceName, watchID string) {
 	if serviceName == "" || watchID == "" {
 		return
@@ -187,10 +146,15 @@ func (d *Discoverer) Unwatch(serviceName, watchID string) {
 		}
 	}
 	d.subMu.Unlock()
-	glog.Info("service watch removed", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
+	glog.Info("移除服务监控", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
 }
 
-// Run starts one background blocking sync loop.
+// Run
+//
+//	@Description: 运行服务发现协程
+//	@receiver d
+//	@param ctx
+//	@return error
 func (d *Discoverer) Run(ctx context.Context) error {
 	d.watchMu.Lock()
 	if d.watching {
@@ -201,16 +165,17 @@ func (d *Discoverer) Run(ctx context.Context) error {
 	d.watchMu.Unlock()
 
 	grs.SafeGo(func() {
+		glog.Info("运行服务发现协程", zap.Duration("wait", 30*time.Second))
 		defer func() {
 			d.watchMu.Lock()
 			d.watching = false
 			d.watchMu.Unlock()
+			glog.Info("服务发现协程终止")
 		}()
 		if err := d.SyncBlocking(ctx); err != nil {
-			glog.Error("discover sync stopped", zap.Error(err))
+			glog.Error("运行服务发现协程", zap.Error(err))
 		}
 	})
-	glog.Info("discover sync started", zap.Duration("wait", 30*time.Second))
 	return nil
 }
 
@@ -236,8 +201,7 @@ func (d *Discoverer) SyncBlocking(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) {
 				return nil
 			}
-			glog.Warn("watch services catalog failed", zap.Error(err))
-			return fmt.Errorf("watch all services: %w", err)
+			return err
 		}
 		if meta != nil && meta.LastIndex > 0 {
 			waitIndex = meta.LastIndex
@@ -245,8 +209,14 @@ func (d *Discoverer) SyncBlocking(ctx context.Context) error {
 
 		names := make([]string, 0, len(services))
 		for name := range services {
+			if name == "consul" {
+				continue
+			}
 			names = append(names, name)
 		}
+
+		glog.Debug("服务列表", zap.Strings("services", names))
+
 		d.setServiceNames(names)
 		d.reconcileServiceWorkers(ctx, names, waitTime)
 	}
@@ -359,7 +329,9 @@ func (d *Discoverer) reconcileServiceWorkers(ctx context.Context, names []string
 			serviceCtx, cancel := context.WithCancel(ctx)
 			d.workers[svcName] = cancel
 			grs.SafeGo(func() {
+				glog.Info("启动服务实例发现协程", zap.String("service_name", svcName))
 				d.serviceSyncLoop(serviceCtx, svcName, waitTime)
+				glog.Info("结束服务实例发现协程", zap.String("service_name", svcName))
 			})
 		}
 	}
@@ -397,7 +369,7 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 			if errors.Is(err, context.Canceled) {
 				return
 			}
-			glog.Warn("service sync failed", zap.String("service_name", serviceName), zap.Error(err))
+			glog.Error("服务实例发现", zap.String("service_name", serviceName), zap.Error(err))
 			select {
 			case <-ctx.Done():
 				return
@@ -412,20 +384,6 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 		passing := instancesFromEntries(entries)
 		d.setServiceCache(serviceName, passing)
 	}
-}
-
-// cloneInstances
-//
-//	@Description: 复制实例切片，避免外部修改内部缓存数据
-//	@param instances
-//	@return []ServiceInstance
-func cloneInstances(instances []ServiceInstance) []ServiceInstance {
-	if len(instances) == 0 {
-		return []ServiceInstance{}
-	}
-	cloned := make([]ServiceInstance, len(instances))
-	copy(cloned, instances)
-	return cloned
 }
 
 // notifyWatchers
@@ -451,6 +409,7 @@ func (d *Discoverer) notifyWatchers(serviceName string, topology *gen.Topology) 
 	d.subMu.RUnlock()
 
 	grs.SafeGo(func() {
+		glog.Debug("触发服务的变更监听回调", zap.String("service_name", serviceName))
 		for _, callback := range callbacks {
 			callback(topology)
 		}
@@ -508,4 +467,49 @@ func instanceEqual(a ServiceInstance, b ServiceInstance) bool {
 		a.RpcAddress == b.RpcAddress &&
 		reflect.DeepEqual(a.Tags, b.Tags) &&
 		reflect.DeepEqual(a.Meta, b.Meta)
+}
+
+// cloneInstances
+//
+//	@Description: 复制实例切片，避免外部修改内部缓存数据
+//	@param instances
+//	@return []ServiceInstance
+func cloneInstances(instances []ServiceInstance) []ServiceInstance {
+	if len(instances) == 0 {
+		return []ServiceInstance{}
+	}
+	cloned := make([]ServiceInstance, len(instances))
+	copy(cloned, instances)
+	return cloned
+}
+
+// instancesFromEntries
+//
+//	@Description: 将 Consul ServiceEntry 列表转换为统一的 ServiceInstance 列表
+//	@param entries
+//	@return []ServiceInstance
+func instancesFromEntries(entries []*api.ServiceEntry) []ServiceInstance {
+	instances := make([]ServiceInstance, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil || entry.Service == nil {
+			continue
+		}
+
+		extAddress := ""
+		if entry.Service.Meta != nil {
+			if v := entry.Service.Meta["ext_address"]; v != "" {
+				extAddress = v
+			}
+
+		}
+		instances = append(instances, ServiceInstance{
+			ID:         entry.Service.ID,
+			Name:       entry.Service.Service,
+			ExtAddress: extAddress,
+			RpcAddress: net.JoinHostPort(entry.Service.Address, strconv.Itoa(entry.Service.Port)),
+			Tags:       entry.Service.Tags,
+			Meta:       entry.Service.Meta,
+		})
+	}
+	return instances
 }

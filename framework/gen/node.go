@@ -12,6 +12,7 @@ type INode interface {
 	GetExtAddress() string
 	GetRpcAddress() string
 	component.IManager
+	GetOptions() *NodeOptions
 	AddComponents(comps ...component.IComponent)
 	GetCluster() ICluster
 	GetSystem() ISystem

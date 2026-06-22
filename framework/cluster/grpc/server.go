@@ -31,10 +31,16 @@ type NodeServer struct {
 	dispatcher Dispatcher
 }
 
+// listen
+//
+//	@Description: grpc集群服务
+//	@receiver s
+//	@return error
 func (s *NodeServer) listen() error {
 	//  启动服务端
 	lis, err := net.Listen("tcp", s.address)
 	if err != nil {
+		glog.Error("grpc集群服务监听", zap.String("listen_addr", s.address))
 		return err
 	}
 	server := grpc.NewServer(
@@ -48,9 +54,7 @@ func (s *NodeServer) listen() error {
 	RegisterNodeServiceServer(server, s)
 	s.lis = lis
 	s.server = server
-	glog.Info("节点服务启动中",
-		zap.String("listen_addr", s.address),
-	)
+	glog.Info("grpc集群服务监听", zap.String("listen_addr", s.address))
 	return nil
 }
 
@@ -69,10 +73,10 @@ func (s *NodeServer) Serve() error {
 		err = s.server.Serve(s.lis)
 		cancel()
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			glog.Error("节点服务已停止", zap.String("listen_addr", s.address), zap.Error(err))
+			glog.Error("grpc集群服务端接收协程", zap.String("listen_addr", s.address), zap.Error(err))
 			return
 		}
-		glog.Info("节点服务已停止", zap.String("listen_addr", s.address))
+		glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
 	})
 	select {
 	case <-timeCtx.Done():
@@ -82,23 +86,24 @@ func (s *NodeServer) Serve() error {
 
 // Stream 实现双向流
 func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
-	glog.Info("节点流连接已建立")
+	glog.Info("grpc集群服务端收协程启动")
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
-				glog.Info("节点流连接已断开")
 				return nil
 			}
-			glog.Error("节点流接收失败", zap.Error(err))
+			glog.Error("grpc集群服务端接收", zap.Error(err))
 			return err
 		}
-		return s.dispatcher.Dispatch(msg)
+		if err = s.dispatcher.Dispatch(msg); err != nil {
+			glog.Error("grpc集群服务端接收", zap.Error(err))
+		}
 	}
 }
 
 func (s *NodeServer) shutdown() {
-	glog.Info("节点服务停止")
+	glog.Info("grpc集群服务端关闭")
 	if s.lis != nil {
 		_ = s.lis.Close()
 	}

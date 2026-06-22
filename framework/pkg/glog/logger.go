@@ -22,10 +22,8 @@ func init() {
 
 // Init 初始化全局 logger
 // cfg: 配置对象，如果为 nil 则使用默认配置
-func Init(cfg *Config) {
-	if cfg == nil {
-		cfg = DefaultConfig()
-	}
+func Init(cfg Config, opts ...zap.Option) {
+
 	atomicLevel = zap.NewAtomicLevelAt(parseLevel(cfg.Level))
 	encoderConfig := zapcore.EncoderConfig{
 		MessageKey:     "M",
@@ -56,11 +54,13 @@ func Init(cfg *Config) {
 		cores = append(cores, zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout)), atomicLevel))
 	}
 	mulCore := zapcore.NewTee(cores...)
+
 	zapOpts := []zap.Option{
 		zap.AddCaller(),
 		zap.AddStacktrace(zap.ErrorLevel),
 		zap.AddCallerSkip(1),
 	}
+	zapOpts = append(zapOpts, opts...)
 	logger := zap.New(mulCore, zapOpts...)
 	sugaredLogger := logger.Sugar()
 

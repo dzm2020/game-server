@@ -8,6 +8,7 @@ import (
 	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry"
+	"reflect"
 
 	"os"
 	"os/signal"
@@ -48,6 +49,10 @@ func (n *Node) GetName() string {
 	return n.options.Name
 }
 
+func (n *Node) GetOptions() *gen.NodeOptions {
+	return &n.options
+}
+
 func (n *Node) AddComponents(comps ...component.IComponent) {
 	n.components = append(n.components, comps...)
 }
@@ -59,54 +64,49 @@ func (n *Node) Startup() (err error) {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
-	glog.Info("waiting for shutdown signal", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM"}))
+	glog.Info("节点等待终止信号", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM"}))
 	sig := <-sigChan
-	glog.Info("signal received, stopping node", zap.String("signal", sig.String()))
+	glog.Info("节点停止运行", zap.String("signal", sig.String()))
 	return n.Stop(context.Background())
 }
 
 func (n *Node) Start(ctx context.Context) (err error) {
-	glog.Info("node startup begin",
-		zap.String("node_id", n.GetId()),
-		zap.Int("component_count", len(n.components)),
-	)
+	glog.Info("节点启动", zap.Int("component_count", len(n.components)))
 
 	n.options.Behavior.OnBeforeStart(n)
 
-	for idx, comp := range n.components {
+	for _, comp := range n.components {
 		if err := n.IManager.AddComponent(comp); err != nil {
-			glog.Error("register component failed",
-				zap.Int("index", idx),
-				zap.Error(err),
-			)
+			glog.Error("节点添加组件失败", zap.Error(err), zap.String("typ", reflect.TypeOf(comp).String()))
 			return err
 		}
 	}
 	if err = n.IManager.Start(ctx); err != nil {
-		glog.Error("start components failed", zap.Error(err))
+		glog.Error("节点启动组件失败", zap.Error(err), zap.Error(err))
 		return err
 	}
 
 	n.options.Behavior.OnAfterStart(n)
 
-	glog.Info("node startup complete", zap.String("node_id", n.GetId()))
+	glog.Info("节点启动完成")
 	return nil
 }
 
 // Stop gracefully stops the node and all components.
 func (n *Node) Stop(ctx context.Context) error {
-	glog.Info("node stop begin", zap.String("node_id", n.GetId()))
+	glog.Info("节点开始停止")
 
 	n.options.Behavior.OnBeforeStop(n)
 
 	stopErr := n.IManager.Stop(ctx)
 	if stopErr != nil {
-		glog.Error("stop components failed", zap.Error(stopErr))
+		glog.Error("节点组件停止错误", zap.Error(stopErr))
 	}
 
 	n.options.Behavior.OnAfterStop(n, stopErr)
 
-	glog.Info("node stop end", zap.Error(stopErr))
+	glog.Info("节点完成停止", zap.Error(stopErr))
+	_ = glog.Stop()
 	return stopErr
 }
 

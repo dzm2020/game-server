@@ -16,7 +16,7 @@ func main() {
 		ExtAddress:  "",
 		RpcAddress:  "127.0.0.1:9000",
 		RemoteNames: []string{"game"},
-		Grpc: &gen.GrpcOptions{
+		Grpc: gen.GrpcOptions{
 			PeerSendChanSize: 1000,
 		},
 		Logger:   logger,

@@ -7,7 +7,6 @@ import (
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry"
-	"game-server/framework/registry/consul"
 
 	"go.uber.org/zap"
 )
@@ -16,16 +15,12 @@ func bootstrap(node *Node, options *gen.NodeOptions) {
 
 	options = gen.EnsureNodeOptions(options)
 
-	glog.Init(options.Logger)
+	glog.Init(options.Logger, zap.Fields(
+		zap.String("nodeId", options.ID),
+		zap.String("nodeName", options.Name),
+	))
 
-	reg, err := consul.New(options.Consul)
-	if err != nil {
-		glog.Error("consul init fail", zap.Error(err))
-		return
-	}
-	compRegistry := registry.NewComponent(node, reg)
-
-	compSystem := actor.NewComponent(node)
+	compRegistry := registry.NewComponent(node)
 
 	grpcOpt := &grpc_cluster.Options{
 		NodeID:           options.ID,
@@ -34,6 +29,8 @@ func bootstrap(node *Node, options *gen.NodeOptions) {
 		PeerNames:        options.RemoteNames,
 	}
 	compCluster := cluster.NewComponent(node, grpc_cluster.New(grpcOpt))
+
+	compSystem := actor.NewComponent(node)
 
 	node.AddComponents(compRegistry, compSystem, compCluster)
 }

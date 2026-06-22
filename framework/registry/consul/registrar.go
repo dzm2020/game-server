@@ -29,21 +29,6 @@ type ttlState struct {
 	note   string
 }
 
-// NewRegistrar
-//
-//	@Description: 基于配置创建独立的注册端客户端
-//	@param cfg
-//	@return *Registrar
-//	@return error
-func NewRegistrar(options *gen.ConsulOptions) (*Registrar, error) {
-	client, err := newConsulClient(options)
-	if err != nil {
-		return nil, err
-	}
-	glog.Info("consul registrar initialized")
-	return newRegistrar(client), nil
-}
-
 // newRegistrar
 //
 //	@Description: 使用客户端与日志器创建 Registrar
@@ -64,16 +49,15 @@ func newRegistrar(client *api.Client) *Registrar {
 //	@receiver rr
 //	@param reg
 //	@return error
-func (rr *Registrar) Register(reg ServiceInstance, options *gen.ConsulOptions) error {
-	if options == nil {
-		return errors.New("consul options is required")
-	}
+func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) error {
 	if reg.ID == "" || reg.Name == "" {
+		glog.Error("Consul注册服务实例", zap.String("service_name", reg.Name), zap.String("service_id", reg.ID))
 		return errors.New("invalid service registration: id/name are required")
 	}
 
 	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
 	if err != nil {
+		glog.Error("Consul注册服务实例", zap.String("address", reg.RpcAddress), zap.Error(err))
 		return err
 	}
 
@@ -100,14 +84,19 @@ func (rr *Registrar) Register(reg ServiceInstance, options *gen.ConsulOptions) e
 	}
 
 	if err = rr.client.Agent().ServiceRegister(serviceReg); err != nil {
-		glog.Error("register service failed", zap.String("service_id", reg.ID), zap.Error(err))
+		glog.Error("Consul注册服务实例", zap.String("service_id", reg.ID), zap.Error(err))
 		return err
 	}
-	glog.Info("register service success", zap.String("service_id", reg.ID), zap.String("service_name", reg.Name))
 
-	if options.TTL > 0 {
-		rr.startTTLHeartbeat(reg.ID, options.TTL, "")
-	}
+	glog.Info("Consul注册服务实例",
+		zap.String("service_id", reg.ID),
+		zap.String("service_name", reg.Name),
+		zap.String("address", reg.RpcAddress),
+		zap.String("ext_address", reg.ExtAddress),
+		zap.Strings("tags", reg.Tags))
+
+	rr.startTTLHeartbeat(reg.ID, options.TTL, "")
+
 	return nil
 }
 
@@ -148,7 +137,7 @@ func (rr *Registrar) SetHealthState(serviceID string, state gen.ServiceHealthSta
 
 // updateTTL
 //
-//	@Description: 调用 Consul API 更新指定服务 TTL 状态
+//	@Description: TTL定时更新服务状态
 //	@receiver rr
 //	@param serviceID
 //	@param note
@@ -156,6 +145,7 @@ func (rr *Registrar) SetHealthState(serviceID string, state gen.ServiceHealthSta
 //	@return error
 func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 	if serviceID == "" {
+		glog.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note))
 		return errors.New("service id is required")
 	}
 	checkID := serviceID
@@ -163,14 +153,16 @@ func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 		checkID = "service:" + checkID
 	}
 	if err := rr.client.Agent().UpdateTTL(checkID, note, status); err != nil {
-		return fmt.Errorf("update ttl for %q: %w", serviceID, err)
+		glog.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note), zap.Error(err))
+		return err
 	}
+	glog.Debug("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note), zap.String("status", status))
 	return nil
 }
 
 // startTTLHeartbeat
 //
-//	@Description: 启动 TTL 心跳协程并定时上报当前状态
+//	@Description: 启动服务TTL协程启动
 //	@receiver rr
 //	@param serviceID
 //	@param ttl
@@ -178,6 +170,9 @@ func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 // @param note
 func (rr *Registrar) startTTLHeartbeat(serviceID string, ttl time.Duration, note string) {
 	interval := ttl / 2
+
+	glog.Info("启动服务TTL协程启动", zap.String("service_id", serviceID),
+		zap.Duration("ttl", ttl), zap.Duration("interval", interval))
 
 	rr.stopTTLHeartbeat(serviceID)
 
@@ -191,38 +186,37 @@ func (rr *Registrar) startTTLHeartbeat(serviceID string, ttl time.Duration, note
 	rr.ttlMu.Unlock()
 
 	grs.SafeGo(func() {
+		glog.Info("服务TTL协程启动成功", zap.String("service_id", serviceID),
+			zap.Duration("ttl", ttl), zap.Duration("interval", interval))
+
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
 		// Send first heartbeat immediately.
 		current, ok := rr.getTTLState(serviceID)
 		if ok {
-			if err := rr.updateTTL(serviceID, current.note, current.status); err != nil {
-				glog.Warn("initial ttl heartbeat failed", zap.String("service_id", serviceID), zap.Error(err))
-			}
+			_ = rr.updateTTL(serviceID, current.note, current.status)
 		}
 
 		for {
 			select {
 			case <-ctx.Done():
+				glog.Info("服务TTL协程退出", zap.String("service_id", serviceID))
 				return
 			case <-ticker.C:
 				current, ok := rr.getTTLState(serviceID)
 				if !ok {
 					return
 				}
-				if err := rr.updateTTL(serviceID, current.note, current.status); err != nil {
-					glog.Warn("ttl heartbeat failed", zap.String("service_id", serviceID), zap.Error(err))
-				}
+				_ = rr.updateTTL(serviceID, current.note, current.status)
 			}
 		}
 	})
-	glog.Debug("ttl heartbeat started", zap.String("service_id", serviceID), zap.Duration("interval", interval))
 }
 
 // stopTTLHeartbeat
 //
-//	@Description: 停止 TTL 心跳协程并清理内存状态
+//	@Description: 停止TTL心跳协程并清理内存状态
 //	@receiver rr
 //	@param serviceID
 func (rr *Registrar) stopTTLHeartbeat(serviceID string) {
@@ -235,13 +229,13 @@ func (rr *Registrar) stopTTLHeartbeat(serviceID string) {
 	rr.ttlMu.Unlock()
 	if ok {
 		cancel()
+		glog.Info("停止服务TTL心跳协程并清理内存状态", zap.String("service_id", serviceID))
 	}
-	glog.Debug("ttl heartbeat stopped", zap.String("service_id", serviceID))
 }
 
 // setTTLState
 //
-//	@Description: 更新内存中的 TTL 状态，实际上报由心跳协程执行
+//	@Description: 更新内存中的TTL状态，实际上报由心跳协程执行
 //	@receiver rr
 //	@param serviceID
 //	@param note
@@ -249,12 +243,14 @@ func (rr *Registrar) stopTTLHeartbeat(serviceID string) {
 //	@return error
 func (rr *Registrar) setTTLState(serviceID, note, status string) error {
 	if serviceID == "" {
+		glog.Error("更新内存中的TTL状态", zap.String("service_id", serviceID))
 		return errors.New("service id is required")
 	}
 	rr.ttlMu.Lock()
 	_, ok := rr.ttlCancels[serviceID]
 	if !ok {
 		rr.ttlMu.Unlock()
+		glog.Error("更新内存中的TTL状态", zap.String("service_id", serviceID), zap.String("reason", "服务不存在"))
 		return fmt.Errorf("ttl heartbeat not running for %q", serviceID)
 	}
 	current := rr.ttlStates[serviceID]
@@ -264,6 +260,7 @@ func (rr *Registrar) setTTLState(serviceID, note, status string) error {
 	}
 	rr.ttlStates[serviceID] = current
 	rr.ttlMu.Unlock()
+	glog.Info("更新内存中的TTL状态", zap.String("service_id", serviceID), zap.String("status", status))
 	return nil
 }
 

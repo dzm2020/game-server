@@ -83,13 +83,16 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	}
 
 	id := s.nextID.Add(1)
-
+	mailboxSize := 1024
+	if opts.MailboxSize > 0 {
+		mailboxSize = opts.MailboxSize
+	}
 	pid := gen.NewPID(id, opts.Name, s.nodeID)
 	runCtx, cancel := context.WithCancel(s.runCtx)
 	proc := &process{
 		system:   s,
 		pid:      pid,
-		mailbox:  make(chan gen.ActorEnvelope, opts.MailboxSize),
+		mailbox:  make(chan gen.ActorEnvelope, mailboxSize),
 		initArgs: append([]any(nil), opts.InitArgs...),
 		runCtx:   runCtx,
 		cancel:   cancel,

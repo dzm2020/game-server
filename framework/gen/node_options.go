@@ -14,10 +14,12 @@ type NodeOptions struct {
 	ExtAddress  string
 	RpcAddress  string
 	RemoteNames []string
-	Grpc        *GrpcOptions
-	Consul      *ConsulOptions
-	Logger      *LoggerOptions
+	Grpc        GrpcOptions
+	Consul      ConsulOptions
+	Logger      LoggerOptions
 	Behavior    INodeBehavior
+	Registry    IRegistry
+	Cluster     ICluster
 }
 
 type GrpcOptions struct {
@@ -56,9 +58,6 @@ func DefaultNodeOptions() *NodeOptions {
 		Name:       "",
 		ExtAddress: "",
 		RpcAddress: "",
-		Grpc:       DefaultGrpcOptions(),
-		Consul:     DefaultConsulOptions(),
-		Logger:     glog.DefaultConfig(),
 	}
 }
 
@@ -69,16 +68,6 @@ func EnsureNodeOptions(opts *NodeOptions) *NodeOptions {
 		return DefaultNodeOptions()
 	}
 
-	// 基础对象默认值
-	if opts.Logger == nil {
-		opts.Logger = glog.DefaultConfig()
-	}
-	if opts.Grpc == nil {
-		opts.Grpc = DefaultGrpcOptions()
-	}
-	if opts.Consul == nil {
-		opts.Consul = DefaultConsulOptions()
-	}
 	if opts.Behavior == nil {
 		opts.Behavior = BaseNodeBehavior{}
 	}

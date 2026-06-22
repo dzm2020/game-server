@@ -183,8 +183,13 @@ func (p *PeerConn) recvLoop() {
 
 		msg, err := stream.Recv()
 		if err != nil {
+			// 对端 handler 正常 return nil，流结束 || 连接关闭
 			if err == io.EOF {
-
+				glog.Info("节点流已结束",
+					zap.String("node_id", p.nodeID),
+				)
+				p.Close()
+				return
 			}
 			glog.Error("节点消息接收失败",
 				zap.String("node_id", p.nodeID),

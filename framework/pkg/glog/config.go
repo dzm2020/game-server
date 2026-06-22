@@ -27,8 +27,8 @@ type Config struct {
 }
 
 // DefaultConfig 返回默认配置
-func DefaultConfig() *Config {
-	return &Config{
+func DefaultConfig() Config {
+	return Config{
 		Path:         "./logs/app.log",
 		Level:        "info",
 		PrintConsole: true,

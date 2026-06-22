@@ -33,8 +33,8 @@ type Cluster struct {
 
 	peers *maputil.ConcurrentMap[string, *PeerConn]
 
-	invoker gen.ILocalInvoker
-	getter  gen.IServerListGetter
+	invoker   gen.ILocalInvoker
+	discovery gen.IDiscovery
 
 	server *NodeServer
 
@@ -54,18 +54,14 @@ func New(options *Options) *Cluster {
 	}
 	c.server = NewNodeServer(options.ListenAddr, c)
 
-	glog.Info("集群初始化完成",
-		zap.String("node_id", c.GetSelfID()),
-		zap.String("listen_addr", c.options.ListenAddr),
-	)
 	return c
 }
 func (c *Cluster) SetLocalInvoker(invoker gen.ILocalInvoker) {
 	c.invoker = invoker
 }
 
-func (c *Cluster) SetServerListGetter(getter gen.IServerListGetter) {
-	c.getter = getter
+func (c *Cluster) SetDiscovery(discovery gen.IDiscovery) {
+	c.discovery = discovery
 }
 
 // Run
@@ -74,7 +70,7 @@ func (c *Cluster) SetServerListGetter(getter gen.IServerListGetter) {
 //	@receiver c
 //	@return error
 func (c *Cluster) Run() error {
-	glog.Info("集群启动中", zap.String("node_id", c.GetSelfID()))
+	glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
 	c.tryConnectPeers()
 	grs.SafeGo(func() {
 		c.connectPeers()
@@ -83,8 +79,20 @@ func (c *Cluster) Run() error {
 
 }
 
+func (c *Cluster) tryConnectPeers() {
+	list := c.discovery.DiscoverAll()
+	for name, instances := range list {
+		if !slices.Contains(c.options.PeerNames, name) {
+			continue
+		}
+		for _, instance := range instances {
+			c.reconcilePeer(instance)
+		}
+	}
+}
+
 func (c *Cluster) connectPeers() {
-	if c.getter == nil {
+	if c.discovery == nil {
 		glog.Warn("未配置注册中心",
 			zap.String("msg", "未配置注册中心，跳过节点发现"),
 			zap.String("node_id", c.GetSelfID()),
@@ -110,20 +118,6 @@ func (c *Cluster) connectPeers() {
 		}
 	}
 }
-func (c *Cluster) tryConnectPeers() {
-	list, _ := c.getter.Get()
-	for name, instances := range list {
-		if !slices.Contains(c.options.PeerNames, name) {
-			continue
-		}
-		for _, instance := range instances {
-			c.reconcilePeer(instance)
-		}
-		glog.Debug("tryConnectPeers", zap.Any("instances", instances))
-	}
-
-	glog.Debug("tryConnectPeers")
-}
 
 func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 	nodeID := ins.GetID()
@@ -138,10 +132,6 @@ func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 
 	_, ok := c.peers.Get(nodeID)
 	if ok {
-		glog.Debug("节点已存在",
-			zap.String("msg", "节点已存在，跳过重复连接"),
-			zap.String("node_id", nodeID),
-		)
 		return
 	}
 	peer := NewPeer(&PeerConfig{
