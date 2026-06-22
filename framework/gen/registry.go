@@ -47,7 +47,13 @@ const (
 type IRegistry interface {
 	IDiscovery
 	IRegistrar
+
+	// Run 启动服务发现后台任务。
+	// 约定：应快速返回（非长期阻塞）；重复调用应尽量幂等。
 	Run(ctx context.Context) error
+
+	// Shutdown 停止后台任务并释放内部资源。
+	// 约定：应可重复调用（幂等）。
 	Shutdown()
 }
 

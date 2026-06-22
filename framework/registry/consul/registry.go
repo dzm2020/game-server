@@ -4,6 +4,7 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
+	"sync"
 
 	"github.com/hashicorp/consul/api"
 	"go.uber.org/zap"
@@ -16,6 +17,9 @@ type Registry struct {
 	*Registrar
 	*Discoverer
 	options gen.ConsulOptions
+
+	runMu     sync.Mutex
+	runCancel context.CancelFunc
 }
 
 // New creates a registry using supplied config.
@@ -55,7 +59,23 @@ func (r *Registry) SetHealthState(serviceID string, state gen.ServiceHealthState
 }
 
 func (r *Registry) Run(ctx context.Context) error {
-	return r.Discoverer.Run(ctx)
+	r.runMu.Lock()
+	if r.runCancel != nil {
+		r.runMu.Unlock()
+		return nil
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	r.runCancel = cancel
+	r.runMu.Unlock()
+
+	if err := r.Discoverer.Run(runCtx); err != nil {
+		cancel()
+		r.runMu.Lock()
+		r.runCancel = nil
+		r.runMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (r *Registry) Discover(serviceName string) []ServiceInstance {
@@ -79,5 +99,16 @@ func (r *Registry) Unwatch(serviceName, watchID string) {
 }
 
 func (r *Registry) Shutdown() {
+	r.runMu.Lock()
+	cancel := r.runCancel
+	r.runCancel = nil
+	r.runMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
 
+// Close 是 Shutdown 的语义别名，方便统一生命周期调用风格。
+func (r *Registry) Close() {
+	r.Shutdown()
 }

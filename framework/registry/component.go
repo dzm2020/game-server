@@ -2,9 +2,11 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry/consul"
+	"sync"
 
 	"go.uber.org/zap"
 )
@@ -18,6 +20,9 @@ func NewComponent(node gen.INode) *Component {
 type Component struct {
 	node gen.INode
 	gen.IRegistry
+
+	runMu     sync.Mutex
+	runCancel context.CancelFunc
 }
 
 func (c *Component) Init() error {
@@ -39,6 +44,17 @@ func (c *Component) Init() error {
 }
 
 func (c *Component) Start(ctx context.Context) error {
+	if c.IRegistry == nil {
+		return fmt.Errorf("registry 为空")
+	}
+
+	c.runMu.Lock()
+	if c.runCancel != nil {
+		c.runMu.Unlock()
+		return nil
+	}
+	c.runMu.Unlock()
+
 	glog.Info("注册发现组件运行")
 	reg := gen.ServiceInstance{
 		ID:         c.node.GetId(),
@@ -52,15 +68,37 @@ func (c *Component) Start(ctx context.Context) error {
 	}
 
 	glog.Info("注册服务", zap.Any("reg", reg))
-	return c.IRegistry.Run(ctx)
+	runCtx, cancel := context.WithCancel(ctx)
+	c.runMu.Lock()
+	c.runCancel = cancel
+	c.runMu.Unlock()
+	if err := c.IRegistry.Run(runCtx); err != nil {
+		cancel()
+		c.runMu.Lock()
+		c.runCancel = nil
+		c.runMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (c *Component) Stop(ctx context.Context) error {
 	if c.IRegistry == nil {
 		return nil
 	}
+
+	c.runMu.Lock()
+	cancel := c.runCancel
+	c.runCancel = nil
+	c.runMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
 	if err := c.IRegistry.Deregister(c.node.GetId()); err != nil {
 		glog.Error("注销服务失败", zap.Error(err))
+		c.IRegistry.Shutdown()
+		return err
 	}
 	glog.Info("注销服务", zap.String("node", c.node.GetId()))
 	c.IRegistry.Shutdown()

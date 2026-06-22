@@ -64,11 +64,8 @@ func (c *Cluster) SetDiscovery(discovery gen.IDiscovery) {
 	c.discovery = discovery
 }
 
-// Run
-//
-//	@Description: 阻塞调用
-//	@receiver c
-//	@return error
+// Run 启动服务端和对端连接协程。
+// 该方法会等待服务监听就绪以及已有 peer 连通检查，然后快速返回。
 func (c *Cluster) Run() error {
 	glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
 
@@ -286,6 +283,11 @@ func (c *Cluster) Close() {
 		c.server.shutdown()
 		glog.Info("集群已关闭", zap.String("node_id", c.GetSelfID()))
 	})
+}
+
+// Shutdown 是 Close 的语义别名，方便与其他组件的生命周期命名保持一致。
+func (c *Cluster) Shutdown() {
+	c.Close()
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) *gen.ClusterMessage {

@@ -182,7 +182,7 @@ func TestManager_StartAfterStoppedRejected(t *testing.T) {
 	if err := mgr.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop failed: %v", err)
 	}
-	if err := mgr.Start(context.Background()); !errors.Is(err, ErrManagerAlreadyStarted) {
-		t.Fatalf("Start after Stop should return ErrManagerAlreadyStarted, got=%v", err)
+	if err := mgr.Start(context.Background()); !errors.Is(err, ErrManagerStoppedCannotRestart) {
+		t.Fatalf("Start after Stop should return ErrManagerStoppedCannotRestart, got=%v", err)
 	}
 }

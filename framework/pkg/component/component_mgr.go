@@ -75,7 +75,7 @@ func (cm *Manager) GetComponent(t any) IComponent {
 	return component
 }
 
-// Register 注册组件，按注册顺序启动，按逆序停止
+// AddComponent 注册组件，按注册顺序启动，按逆序停止。
 func (cm *Manager) AddComponent(component IComponent) error {
 	if cm.started.Load() {
 		return ErrCannotRegisterComponentAfterStarted
@@ -126,11 +126,11 @@ func (cm *Manager) Init() error {
 
 // Start 初始化并启动所有已注册的组件
 func (cm *Manager) Start(ctx context.Context) (err error) {
-	if cm.started.Load() {
-		return ErrManagerAlreadyStarted
-	}
 	if cm.stopped.Load() {
 		return ErrManagerStoppedCannotRestart
+	}
+	if cm.started.Load() {
+		return ErrManagerAlreadyStarted
 	}
 
 	if err = cm.Init(); err != nil {

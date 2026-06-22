@@ -13,6 +13,7 @@ import (
 
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"go.uber.org/zap"
@@ -43,6 +44,8 @@ type Node struct {
 	options gen.NodeOptions
 	component.IManager
 	components []component.IComponent
+	addOnce    sync.Once
+	addErr     error
 
 	cluster  gen.ICluster
 	system   gen.ISystem
@@ -136,11 +139,25 @@ func (n *Node) Startup() (err error) {
 	)
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGKILL, syscall.SIGTERM)
-	glog.Info("节点等待终止信号", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGKILL", "SIGTERM"}))
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	glog.Info("节点等待终止信号", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
 	sig := <-sigChan
 	glog.Info("节点停止运行", zap.String("signal", sig.String()))
 	return n.Stop(context.Background())
+}
+
+func (n *Node) addComponentsToManager() error {
+	n.addOnce.Do(func() {
+		for _, comp := range n.components {
+			if err := n.IManager.AddComponent(comp); err != nil {
+				glog.Error("节点添加组件失败", zap.Error(err), zap.String("typ", reflect.TypeOf(comp).String()))
+				n.addErr = err
+				return
+			}
+		}
+	})
+	return n.addErr
 }
 
 func (n *Node) Start(ctx context.Context) (err error) {
@@ -148,14 +165,12 @@ func (n *Node) Start(ctx context.Context) (err error) {
 
 	n.options.Behavior.OnBeforeStart(n)
 
-	for _, comp := range n.components {
-		if err := n.IManager.AddComponent(comp); err != nil {
-			glog.Error("节点添加组件失败", zap.Error(err), zap.String("typ", reflect.TypeOf(comp).String()))
-			return err
-		}
+	if err := n.addComponentsToManager(); err != nil {
+		return err
 	}
+
 	if err = n.IManager.Start(ctx); err != nil {
-		glog.Error("节点启动组件失败", zap.Error(err), zap.Error(err))
+		glog.Error("节点启动组件失败", zap.Error(err))
 		return err
 	}
 
