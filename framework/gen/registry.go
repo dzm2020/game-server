@@ -58,6 +58,7 @@ type IRegistrar interface {
 }
 
 type IDiscovery interface {
+	GetInstance(serverID string) (ServiceInstance, bool)
 	Discover(serviceName string) []ServiceInstance
 	DiscoverAll() map[string][]ServiceInstance
 	ListServices() []string

@@ -14,9 +14,11 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 // PeerConn 节点连接
@@ -180,7 +182,7 @@ func (p *PeerConn) recvLoop() {
 		msg, err := stream.Recv()
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
-			if err == io.EOF || errors.Is(err, context.Canceled) {
+			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
 				glog.Info("grpc远程节点流接收消息", zap.String("node_id", p.nodeID), zap.Error(err))
 				p.Close()
 				return

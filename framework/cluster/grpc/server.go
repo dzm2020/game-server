@@ -7,11 +7,14 @@ import (
 	"game-server/framework/pkg/glog"
 	"io"
 	"net"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 )
 
 // NewNodeServer 创建服务端
@@ -72,8 +75,11 @@ func (s *NodeServer) Serve() error {
 	grs.SafeGo(func() {
 		err = s.server.Serve(s.lis)
 		cancel()
-		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			glog.Error("grpc集群服务端接收协程", zap.String("listen_addr", s.address), zap.Error(err))
+		if err == nil ||
+			errors.Is(err, grpc.ErrServerStopped) ||
+			errors.Is(err, net.ErrClosed) ||
+			strings.Contains(err.Error(), "use of closed network connection") {
+			glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
 			return
 		}
 		glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
@@ -90,7 +96,8 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) {
+			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
+				glog.Info("grpc集群服务端接收终止", zap.Error(err))
 				return nil
 			}
 			glog.Error("grpc集群服务端接收", zap.Error(err))

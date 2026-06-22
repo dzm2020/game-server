@@ -205,7 +205,12 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
 		return err
 	}
-
+	_, ok := c.discovery.GetInstance(nodeId)
+	if !ok {
+		err := fmt.Errorf("节点不在服务列表: %s", nodeId)
+		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		return err
+	}
 	if !peer.IsConnected() {
 		err := fmt.Errorf("节点未连接: %s", nodeId)
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId))

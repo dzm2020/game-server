@@ -19,17 +19,18 @@ import (
 
 // Discoverer wraps discovery-side capabilities.
 type Discoverer struct {
-	client   *api.Client
-	cacheMu  sync.RWMutex
-	cache    map[string][]ServiceInstance
-	names    []string
-	watchMu  sync.Mutex
-	watching bool
-	waitTime time.Duration
-	workers  map[string]context.CancelFunc
-	subMu    sync.RWMutex
-	watchers map[string]map[string]gen.ServiceChangeHandler
-	watchSeq uint64
+	client      *api.Client
+	cacheMu     sync.RWMutex
+	cache       map[string][]ServiceInstance
+	instanceMap map[string]ServiceInstance // instanceMap 以服务实例ID为索引，便于按ID快速查询实例信息。
+	names       []string
+	watchMu     sync.Mutex
+	watching    bool
+	waitTime    time.Duration
+	workers     map[string]context.CancelFunc
+	subMu       sync.RWMutex
+	watchers    map[string]map[string]gen.ServiceChangeHandler
+	watchSeq    uint64
 }
 
 // newDiscoverer
@@ -40,11 +41,12 @@ type Discoverer struct {
 //	@return *Discoverer
 func newDiscoverer(client *api.Client) *Discoverer {
 	return &Discoverer{
-		client:   client,
-		cache:    make(map[string][]ServiceInstance),
-		waitTime: 30 * time.Second,
-		workers:  make(map[string]context.CancelFunc),
-		watchers: make(map[string]map[string]gen.ServiceChangeHandler),
+		client:      client,
+		cache:       make(map[string][]ServiceInstance),
+		instanceMap: make(map[string]ServiceInstance),
+		waitTime:    30 * time.Second,
+		workers:     make(map[string]context.CancelFunc),
+		watchers:    make(map[string]map[string]gen.ServiceChangeHandler),
 	}
 }
 
@@ -72,6 +74,10 @@ func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions
 	}
 	entries, meta, err := d.client.Health().Service(serviceName, "", true, q)
 	if err != nil {
+		// 关闭或超时取消，视为正常结束
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, err
+		}
 		glog.Error("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Error(err))
 		return nil, nil, err
 	}
@@ -91,13 +97,20 @@ func (d *Discoverer) ListServices() []string {
 // DiscoverAll returns discovered instances grouped by service name.
 func (d *Discoverer) DiscoverAll() map[string][]ServiceInstance {
 	names := d.ListServices()
-
 	all := make(map[string][]ServiceInstance, len(names))
 	for _, name := range names {
 		instances := d.Discover(name)
 		all[name] = instances
 	}
 	return all
+}
+
+func (d *Discoverer) GetInstance(serverID string) (ServiceInstance, bool) {
+	d.cacheMu.RLock()
+	defer d.cacheMu.RUnlock()
+
+	instances, ok := d.instanceMap[serverID]
+	return instances, ok
 }
 
 // Watch
@@ -252,6 +265,7 @@ func (d *Discoverer) setServiceCache(serviceName string, passing []ServiceInstan
 	d.cacheMu.Lock()
 	previous, hadPrevious = d.cache[serviceName]
 	d.cache[serviceName] = cloneInstances(passing)
+	d.rebuildInstanceMapLocked()
 	d.cacheMu.Unlock()
 
 	added, updated, removed, changed := diffInstances(previous, passing)
@@ -277,6 +291,7 @@ func (d *Discoverer) removeServiceCache(serviceName string) {
 	d.cacheMu.Lock()
 	previous, hadPrevious = d.cache[serviceName]
 	delete(d.cache, serviceName)
+	d.rebuildInstanceMapLocked()
 	d.cacheMu.Unlock()
 	if hadPrevious && len(previous) > 0 {
 		topology := &gen.Topology{
@@ -366,7 +381,8 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 
 		entries, meta, err := d.queryServiceEntries(serviceName, query.WithContext(ctx))
 		if err != nil {
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				glog.Info("服务发现同步已停止", zap.String("service_name", serviceName))
 				return
 			}
 			glog.Error("服务实例发现", zap.String("service_name", serviceName), zap.Error(err))
@@ -481,6 +497,19 @@ func cloneInstances(instances []ServiceInstance) []ServiceInstance {
 	cloned := make([]ServiceInstance, len(instances))
 	copy(cloned, instances)
 	return cloned
+}
+
+func (d *Discoverer) rebuildInstanceMapLocked() {
+	next := make(map[string]ServiceInstance)
+	for _, instances := range d.cache {
+		for _, ins := range instances {
+			if ins.ID == "" {
+				continue
+			}
+			next[ins.ID] = ins
+		}
+	}
+	d.instanceMap = next
 }
 
 // instancesFromEntries
