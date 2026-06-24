@@ -47,6 +47,20 @@ func (s *baseServer) Addr() string {
 
 func (s *baseServer) Shutdown(ctx context.Context) {
 	s.cancel()
-	s.waitGroup.Wait()
+	if ctx == nil {
+		s.waitGroup.Wait()
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.waitGroup.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 	return
 }

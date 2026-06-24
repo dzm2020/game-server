@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"game-server/framework/pkg/stopper"
@@ -119,6 +118,7 @@ func (b *baseConn) Send(msg []byte) error {
 
 func (b *baseConn) heartbeat(connection IConnection) {
 	ticker := time.NewTicker(time.Duration(b.heartIntervalSecond) * time.Second / 2)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-b.ctx.Done():
@@ -126,7 +126,7 @@ func (b *baseConn) heartbeat(connection IConnection) {
 		case <-ticker.C:
 			lastActive := b.lastActive.Load()
 			if time.Now().Unix()-lastActive >= b.heartIntervalSecond {
-				_ = connection.Close(fmt.Errorf("heartbeat error"))
+				_ = connection.Close(ErrConnHeartTimeout)
 			}
 		}
 	}

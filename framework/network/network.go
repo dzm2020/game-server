@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 )
@@ -52,6 +53,9 @@ func NewServer(handler IHandler, protoAddr string, options ServerOptions) (IServ
 	}
 	options = normalization(options)
 	network, address := parseProtoAddr(protoAddr)
+	if network == "" || address == "" {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidProtoAddr, protoAddr)
+	}
 	path, address := parseWsAddr(address)
 	base := newBaseServer(network, address, handler, options)
 	switch network {
