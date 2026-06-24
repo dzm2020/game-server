@@ -43,7 +43,11 @@ func (a *Agent) Push(msg interface{}) error {
 	}
 	switch v := msg.(type) {
 	case *gen.Message:
-		return a.connection.Send(gen.Encode(v))
+		data, err := gen.Encode(v)
+		if err != nil {
+			return err
+		}
+		return a.connection.Send(data)
 	case []byte:
 		return a.connection.Send(v)
 	default:
@@ -58,8 +62,11 @@ func connID(conn network.IConnection) int64 {
 	return conn.ID()
 }
 
-func SendToClient(ctx gen.IContext, pid *gen.PID, msg *gen.Message) error {
-	data := gen.Encode(msg)
+func SendToClient(ctx gen.IContext, agentPid *gen.PID, msg *gen.Message) error {
+	data, err := gen.Encode(msg)
+	if err != nil {
+		return err
+	}
 	m := gen.NewMessage(255, 255, data)
-	return ctx.Tell(pid, m)
+	return ctx.Tell(agentPid, m)
 }

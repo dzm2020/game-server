@@ -4,7 +4,14 @@ import (
 	"encoding/binary"
 )
 
-func Encode(msg *Message) []byte {
+const (
+	MessageDataMaxSize = 0xffff
+)
+
+func Encode(msg *Message) ([]byte, error) {
+	if len(msg.Data) >= MessageDataMaxSize {
+		return msg.Data, ErrMessageDataOverSize
+	}
 	msg.Len = uint32(len(msg.Data))
 	buf := make([]byte, HeadLen+len(msg.Data))
 	offset := 0
@@ -19,18 +26,21 @@ func Encode(msg *Message) []byte {
 	binary.BigEndian.PutUint32(buf[offset:], msg.Index)
 	offset += 4
 	copy(buf[offset:], msg.Data)
-	return buf
+	return buf, nil
 }
 
-func Decode(buf []byte) (*Message, int) {
+func Decode(buf []byte) (*Message, int, error) {
 
 	if len(buf) < HeadLen {
-		return nil, 0
+		return nil, 0, nil
 	}
 	l := binary.BigEndian.Uint32(buf)
 	total := HeadLen + int(l)
+	if l > MessageDataMaxSize {
+		return nil, 0, ErrMessageDataOverSize
+	}
 	if len(buf) < total {
-		return nil, 0
+		return nil, 0, nil
 	}
 
 	msg := &Message{Head: &Head{}}
@@ -48,5 +58,5 @@ func Decode(buf []byte) (*Message, int) {
 	msg.Data = make([]byte, msg.Len)
 	copy(msg.Data, buf[offset:total])
 
-	return msg, total
+	return msg, total, nil
 }

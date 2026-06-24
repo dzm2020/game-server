@@ -213,8 +213,11 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId))
 		return err
 	}
-
-	m := NewClusterMessage(from, to, msg)
+	m, err := NewClusterMessage(from, to, msg)
+	if err != nil {
+		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		return err
+	}
 	if err := peer.send(m); err != nil {
 		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
 		return err
@@ -228,7 +231,11 @@ func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) {
 	var success int
 	c.peers.Range(func(nodeID string, peer *PeerConn) bool {
 		to.NodeID = nodeID
-		m := NewClusterMessage(gen.NoSender, to, msg)
+		m, err := NewClusterMessage(gen.NoSender, to, msg)
+		if err != nil {
+			glog.Warn("广播到节点失败", zap.String("target_node_id", nodeID), zap.Error(err))
+			return true
+		}
 		if err := peer.send(m); err != nil {
 			glog.Warn("广播到节点失败", zap.String("target_node_id", nodeID), zap.Error(err))
 			return true
@@ -245,7 +252,11 @@ func (c *Cluster) GetSelfID() string {
 }
 
 func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
-	m, _ := gen.Decode(msg.Data)
+	m, _, err := gen.Decode(msg.Data)
+	if err != nil {
+		glog.Error("grpc集群接受处理消息", zap.Error(err))
+		return err
+	}
 	if m == nil {
 		err := gen.ErrClusterDecodeFailed
 		glog.Error("grpc集群接受处理消息", zap.ByteString("data", msg.Data), zap.Error(err))
@@ -290,11 +301,15 @@ func (c *Cluster) Shutdown() {
 	c.Close()
 }
 
-func NewClusterMessage(from, to *gen.PID, msg *gen.Message) *gen.ClusterMessage {
+func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {
+	data, err := gen.Encode(msg)
+	if err != nil {
+		return nil, err
+	}
 	return &gen.ClusterMessage{
 		CreatedAt: time.Now().Unix(),
 		SourcePid: from,
 		TargetPid: to,
-		Data:      gen.Encode(msg),
-	}
+		Data:      data,
+	}, nil
 }

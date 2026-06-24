@@ -49,7 +49,7 @@ func (h *eventHandler) OnMessage(conn network.IConnection, data []byte) (int, er
 	for consumed < len(data) {
 		msg, n := gen.Decode(data[consumed:])
 		if n == 0 {
-			break
+			return consumed, nil
 		}
 		if err := h.g.routeInbound(conn, msg); err != nil {
 			return consumed, err

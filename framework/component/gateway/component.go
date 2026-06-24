@@ -5,14 +5,16 @@ import (
 	"game-server/framework/gen"
 )
 
-func NewComponent(node gen.INode) *Component {
+func NewComponent(node gen.INode, options Options) *Component {
 	return &Component{
-		node: node,
+		node:    node,
+		options: normalization(options),
 	}
 }
 
 type Component struct {
-	node gen.INode
+	node    gen.INode
+	options Options
 	*gatWay
 }
 
@@ -21,28 +23,19 @@ func (c *Component) Init() error {
 	if system == nil {
 		return ErrSystemComponentAbsent
 	}
-	cfg := DefaultConfig()
-	if cfg == nil {
-		return ErrConfigNil
-	}
-	c.gatWay = newGatWay(cfg, system)
+	c.gatWay = newGatWay(c.options, system)
 	return c.gatWay.Init()
 }
+
 func (c *Component) Start(ctx context.Context) error {
 	if c.gatWay == nil {
 		return ErrComponentNotInited
 	}
-	if !c.cfg.Enable {
-		return nil
-	}
-
 	return c.gatWay.Start(ctx)
 }
+
 func (c *Component) Stop(ctx context.Context) error {
 	if c.gatWay == nil {
-		return nil
-	}
-	if !c.cfg.Enable {
 		return nil
 	}
 	return c.gatWay.Stop(ctx)
