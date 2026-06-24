@@ -2,6 +2,8 @@ package actor
 
 import (
 	"game-server/framework/gen"
+	"game-server/framework/grs"
+	"sync"
 	"time"
 )
 
@@ -37,6 +39,77 @@ func (c *actorContext) System() gen.ISystem {
 
 func (c *actorContext) Done() <-chan struct{} {
 	return c.done
+}
+
+func (c *actorContext) Ticker(interval time.Duration, task gen.ActorTask) (stop func()) {
+	if interval <= 0 || task == nil {
+		return func() {}
+	}
+	//  todo 后续可以替换成异步定时器，这样就不需要每个timer启动一个协程了
+	ticker := time.NewTicker(interval)
+	stopCh := make(chan struct{})
+	var once sync.Once
+
+	stop = func() {
+		once.Do(func() {
+			close(stopCh)
+			ticker.Stop()
+		})
+	}
+
+	grs.SafeGo(func() {
+		defer stop()
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				if err := c.DoTask(c.self, task); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	return stop
+}
+
+func (c *actorContext) AfterFunc(delay time.Duration, task gen.ActorTask) (stop func()) {
+	if delay <= 0 || task == nil {
+		return func() {}
+	}
+	//  todo 后续可以替换成异步定时器，这样就不需要每个timer启动一个协程了
+	timer := time.NewTimer(delay)
+	stopCh := make(chan struct{})
+	var once sync.Once
+
+	stop = func() {
+		once.Do(func() {
+			close(stopCh)
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		})
+	}
+
+	grs.SafeGo(func() {
+		defer stop()
+		select {
+		case <-c.done:
+			return
+		case <-stopCh:
+			return
+		case <-timer.C:
+			_ = c.DoTask(c.self, task)
+		}
+	})
+
+	return stop
 }
 
 func (c *actorContext) Tell(target any, msg *gen.Message) error {

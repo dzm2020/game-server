@@ -44,6 +44,8 @@ type IContext interface {
 	InitArgs() []any
 	System() ISystem
 	Done() <-chan struct{}
+	Ticker(interval time.Duration, task ActorTask) (stop func())
+	AfterFunc(delay time.Duration, task ActorTask) (stop func())
 	Tell(target any, msg *Message) error
 	SetAskTimeout(timeout time.Duration)
 	Ask(target any, msg *Message) ([]byte, error)
