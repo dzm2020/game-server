@@ -9,7 +9,7 @@ var (
 	ErrComponentNotInited     = errors.New("gateway component is not initialized")
 	ErrClientAgentNotFound    = errors.New("gateway client agent not found")
 	ErrInboundPayloadTooLarge = errors.New("gateway inbound payload too large")
-	ErrAgentFactoryNil        = errors.New("gateway agent factory is nil")
+	ErrAgentSpawnerNil        = errors.New("gateway agent spawner is nil")
 	ErrCreateNetworkServer    = errors.New("gateway create network server failed")
 	ErrBuildClientAgent       = errors.New("gateway build client agent failed")
 	ErrSpawnClientAgent       = errors.New("gateway spawn client agent failed")

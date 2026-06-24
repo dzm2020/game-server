@@ -17,14 +17,25 @@ type IAgent interface {
 }
 
 type Agent struct {
-	gen.IActor
+	gen.BaseActor
 	connection network.IConnection
 }
 
+const (
+	DefaultPushCmd = 255
+	DefaultPushAct = 255
+)
+
 func (a *Agent) OnInit(ctx gen.IContext) error {
-	ctx.GetRouter().Register(255, 255, func(ctx gen.IContext, request interface{}) error {
-		requestMsg, _ := request.(*gen.Message)
-		return a.Push(requestMsg.Data)
+	ctx.GetRouter().Register(DefaultPushCmd, DefaultPushAct, func(ctx gen.IContext, request interface{}) error {
+		switch req := request.(type) {
+		case *gen.Message:
+			return a.Push(req.Data)
+		case []byte:
+			return a.Push(req)
+		default:
+			return ErrInvalidMessageType
+		}
 	}, nil)
 	return nil
 }

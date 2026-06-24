@@ -9,8 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type AgentFactory func() (IAgent, error)
-
 func newGatWay(options Options, system gen.ISystem) *gatWay {
 	c := &gatWay{
 		options: options,
@@ -46,7 +44,7 @@ func (c *gatWay) Start(_ context.Context) error {
 	}
 
 	if c.options.AgentFactory == nil {
-		return ErrAgentFactoryNil
+		return ErrAgentSpawnerNil
 	}
 
 	if err := c.server.Start(); err != nil {
@@ -103,22 +101,10 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 	if _, ok := c.getConnActorPID(conn.ID()); ok {
 		return nil
 	}
-
-	agent, err := c.options.AgentFactory()
-	if err != nil {
-		glog.Error("网关创建客户端Actor失败",
-			zap.Int64("conn_id", conn.ID()),
-			zap.Error(err))
-		return ErrBuildClientAgent
-	}
-	if agent == nil {
-		glog.Error("网关客户端Actor为空",
-			zap.Int64("conn_id", conn.ID()))
-		return ErrNilClientAgent
-	}
+	agent, spawnerOptions := c.options.AgentFactory()
 	agent.SetConnection(conn)
 
-	pid, err := c.system.SpawnActor(agent, gen.SpawnOptions{})
+	pid, err := c.system.SpawnActor(agent, spawnerOptions)
 	if err != nil {
 		glog.Error("网关启动客户端Actor失败",
 			zap.Int64("conn_id", conn.ID()),

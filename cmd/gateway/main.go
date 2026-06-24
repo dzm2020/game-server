@@ -4,23 +4,28 @@ import (
 	"game-server/framework/gen"
 	"game-server/framework/node"
 	"game-server/framework/pkg/glog"
-	"game-server/internal/chatsvr"
+	"game-server/internal/gatewaysvr"
 )
 
 func main() {
 	logger := glog.DefaultConfig()
-	logger.Level = "debug"
+	logger.Level = "info"
+
 	n := node.New(gen.NodeOptions{
-		ID:          "chat1",
-		Name:        "chat",
-		ExtAddress:  "",
-		RpcAddress:  "127.0.0.1:9000",
-		RemoteNames: []string{"game", "gateway"},
+		ID:         "gateway1",
+		Name:       "gateway",
+		ExtAddress: "127.0.0.1:7000",
+		RpcAddress: "127.0.0.1:9002",
+		RemoteNames: []string{
+			"chat",
+			"game",
+		},
 		Grpc: gen.GrpcOptions{
 			PeerSendChanSize: 1000,
 		},
 		Logger:   logger,
-		Behavior: chatsvr.Behavior{},
+		Behavior: gatewaysvr.Behavior{},
 	})
+
 	_ = n.Startup()
 }
