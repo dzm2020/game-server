@@ -51,6 +51,10 @@ func (c *actorContext) Ask(target any, msg *gen.Message) ([]byte, error) {
 	return c.system.Ask(c.self, target, msg, c.askTimeout)
 }
 
+func (c *actorContext) DoTask(target any, task gen.ActorTask) error {
+	return c.system.DoTask(c.self, target, task)
+}
+
 func (c *actorContext) Respond(v []byte) error {
 	if c.current.Respond == nil {
 		return ErrNoResponder

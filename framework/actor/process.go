@@ -98,6 +98,8 @@ func (c *process) onMessage(ctx gen.IContext, actor gen.IActor, env gen.ActorEnv
 			return c.route.Handle(ctx, msg)
 		}
 		return actor.OnMessage(ctx)
+	case gen.ActorTask:
+		return msg(ctx)
 	default:
 		return actor.OnMessage(ctx)
 	}

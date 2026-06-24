@@ -6,6 +6,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type ActorTask func(ctx IContext) error
+
 type Responder func(v []byte) error
 
 type ActorEnvelope struct {
@@ -21,6 +23,7 @@ type ISystem interface {
 	SetRemoteInvoker(invoker IRemoteInvoker)
 	Tell(from *PID, target any, msg *Message) error
 	Ask(from *PID, target any, msg *Message, timeout time.Duration) ([]byte, error)
+	DoTask(from *PID, target any, task ActorTask) error
 	SendEnvelope(target any, env ActorEnvelope) error
 	StopProcess(target any)
 	Shutdown()
@@ -47,6 +50,7 @@ type IContext interface {
 	Respond(v []byte) error
 	Actor() IActor
 	GetRouter() IActorRoute
+	DoTask(target any, task ActorTask) error
 }
 
 type BaseActor struct {

@@ -204,6 +204,13 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 	return reply.wait(timeout)
 }
 
+func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
+	return s.SendEnvelope(target, gen.ActorEnvelope{
+		Sender:  from,
+		Payload: task,
+	})
+}
+
 func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 	if s.closed.Load() {
 		return ErrSystemClosed
