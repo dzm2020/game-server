@@ -111,6 +111,11 @@ func (b *baseConn) Send(msg []byte) error {
 	select {
 	case b.sendChan <- msg:
 	default:
+		glog.Warn("连接发送队列已满",
+			zap.Int64("connectionId", b.id),
+			zap.String("network", b.network),
+			zap.Int("queueLen", len(b.sendChan)),
+			zap.Int("queueCap", cap(b.sendChan)))
 		return ErrChannelFull
 	}
 	return nil

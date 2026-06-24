@@ -18,10 +18,11 @@ const (
 
 type TCPConnection struct {
 	*baseConn
-	conn        *net.TCPConn
-	tmpBuf      []byte
-	readBuffer  buffer.IBuffer
-	writeBuffer buffer.IBuffer
+	conn         *net.TCPConn
+	tmpBuf       []byte
+	readBuffer   buffer.IBuffer
+	writeBuffer  buffer.IBuffer
+	writeTimeout time.Duration
 }
 
 func newTCPConnection(common connCommon, conn *net.TCPConn) *TCPConnection {
@@ -31,10 +32,12 @@ func newTCPConnection(common connCommon, conn *net.TCPConn) *TCPConnection {
 	writeBufferSize := common.serverOpts.TcpOptions.WriteBufferSize
 
 	tcpConn := &TCPConnection{
-		baseConn:    base,
-		tmpBuf:      make([]byte, readBufSize),
-		readBuffer:  buffer.New(readBufSize),
-		writeBuffer: buffer.New(writeBufferSize),
+		baseConn:     base,
+		conn:         conn,
+		tmpBuf:       make([]byte, readBufSize),
+		readBuffer:   buffer.New(readBufSize),
+		writeBuffer:  buffer.New(writeBufferSize),
+		writeTimeout: common.serverOpts.TcpOptions.WriteTimeout,
 	}
 	return tcpConn
 }
@@ -121,13 +124,30 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 			break
 		}
 	}
-
 	for c.writeBuffer.Len() > 0 {
+		if c.writeTimeout > 0 {
+			if err := c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout)); err != nil {
+				return err
+			}
+		}
 		n, err := c.conn.Write(c.writeBuffer.Bytes())
 		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				glog.Warn("TCP写入超时",
+					zap.Int64("connectionId", c.ID()),
+					zap.Int("pendingWriteBytes", c.writeBuffer.Len()),
+					zap.Int("sendQueueLen", len(c.sendChan)),
+					zap.Int("sendQueueCap", cap(c.sendChan)),
+					zap.Duration("writeTimeoutSecond", c.writeTimeout))
+				return ErrConnWriteTimeout
+			}
 			return err
 		}
 		_ = c.writeBuffer.Skip(n)
+	}
+	if c.writeTimeout > 0 {
+		_ = c.conn.SetWriteDeadline(time.Time{})
 	}
 	return nil
 }

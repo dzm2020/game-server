@@ -9,6 +9,7 @@ var (
 	ErrConnectionClosed = errors.New("connection closed")
 	ErrChannelFull      = errors.New("channel full")
 	ErrConnHeartTimeout = errors.New("heart timeout")
+	ErrConnWriteTimeout = errors.New("write timeout")
 	ErrInvalidProtoAddr = errors.New("invalid proto address")
 )
 

@@ -3,6 +3,7 @@ package network
 import (
 	"crypto/tls"
 	"net/http"
+	"time"
 )
 
 const (
@@ -11,6 +12,7 @@ const (
 	defaultUdpRcvChanSize  = 1024
 	defaultSendChanSize    = 1024
 	defaultHeartTimeoutSec = 5
+	defaultTCPWriteTimeout = time.Millisecond * 500
 )
 
 type ServerOptions struct {
@@ -31,6 +33,7 @@ type WebServerOptions struct {
 type TcpServerOptions struct {
 	WriteBufferSize int
 	ReadBufferSize  int
+	WriteTimeout    time.Duration
 }
 type UdpServerOptions struct {
 	ReadChanSize int
@@ -49,6 +52,9 @@ func normalization(opts ServerOptions) ServerOptions {
 	}
 	if opts.TcpOptions.WriteBufferSize <= 0 {
 		opts.TcpOptions.WriteBufferSize = defaultSendBufferSize
+	}
+	if opts.TcpOptions.WriteTimeout <= 0 {
+		opts.TcpOptions.WriteTimeout = defaultTCPWriteTimeout
 	}
 	if opts.UdpOptions.ReadChanSize <= 0 {
 		opts.UdpOptions.ReadChanSize = defaultUdpRcvChanSize
