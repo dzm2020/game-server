@@ -34,14 +34,14 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 	return nil
 }
 
-func (c *gatWay) unbindConnection(connID uint64) {
+func (c *gatWay) unbindConnection(connID int64) {
 	pid, ok := c.registry.Unbind(connID)
 	if ok {
 		_ = c.stopConnActor(pid)
 	}
 }
 
-func (c *gatWay) getConnActorPID(connID uint64) (*gen.PID, bool) {
+func (c *gatWay) getConnActorPID(connID int64) (*gen.PID, bool) {
 	return c.registry.Get(connID)
 }
 

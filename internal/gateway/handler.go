@@ -1,10 +1,11 @@
 package gateway
 
 import (
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/network"
 	"game-server/framework/pkg/glog"
+
+	"go.uber.org/zap"
 )
 
 type eventHandler struct {
@@ -15,57 +16,45 @@ func newEventHandler(g *gatWay) *eventHandler {
 	return &eventHandler{g: g}
 }
 
-func (h *eventHandler) OnConnect(conn network.IConnection) {
+func (h *eventHandler) OnConnect(conn network.IConnection) error {
 	if conn == nil {
-		return
+		return nil
 	}
 	if err := h.g.bindConnection(conn); err != nil {
-		glog.Errorf("gateway bind client agent failed conn_id=%d err=%v", conn.ID(), err)
-		conn.Close()
-		return
+		glog.Error("gateway bind client agent failed",
+			zap.Int64("conn_id", conn.ID()),
+			zap.Error(err))
+		_ = conn.Close(err)
+		return err
 	}
-	glog.Infof("gateway client connected conn_id=%d remote=%s", conn.ID(), conn.RemoteAddr())
+	glog.Info("gateway client connected",
+		zap.Int64("conn_id", conn.ID()),
+		zap.String("remote", conn.RemoteAddr()))
+	return nil
 }
 
-func (h *eventHandler) OnDisconnect(conn network.IConnection, err error) {
+func (h *eventHandler) OnClose(conn network.IConnection, err error) {
 	if conn == nil {
 		return
 	}
 	h.g.unbindConnection(conn.ID())
-	glog.Infof("gateway client disconnected conn_id=%d remote=%s err=%v", conn.ID(), conn.RemoteAddr(), err)
+	glog.Info("gateway client disconnected",
+		zap.Int64("conn_id", conn.ID()),
+		zap.String("remote", conn.RemoteAddr()),
+		zap.Error(err))
 }
 
-func (h *eventHandler) OnMessage(conn network.IConnection, msg interface{}) {
-	switch v := msg.(type) {
-	case *gen.Message:
-		_ = h.g.routeInbound(conn, v)
-	case []*gen.Message:
-		for _, item := range v {
-			_ = h.g.routeInbound(conn, item)
+func (h *eventHandler) OnMessage(conn network.IConnection, data []byte) (int, error) {
+	consumed := 0
+	for consumed < len(data) {
+		msg, n := gen.Decode(data[consumed:])
+		if n == 0 {
+			break
 		}
+		if err := h.g.routeInbound(conn, msg); err != nil {
+			return consumed, err
+		}
+		consumed += n
 	}
-}
-
-type wsProtocolCodec struct {
-}
-
-const protocolHeaderSize = 12
-
-func newWSProtocolCodec() *wsProtocolCodec {
-	return &wsProtocolCodec{}
-}
-
-func (c *wsProtocolCodec) Decode(data []byte) (*gen.Message, error) {
-	return gen.Decode(data)
-}
-
-func (c *wsProtocolCodec) Encode(v *gen.Message) ([]byte, error) {
-	switch value := v.(type) {
-	case []byte:
-		return value, nil
-	case *gen.Message:
-		return gen.Encode(value), nil
-	default:
-		return nil, fmt.Errorf("unsupported gateway encode payload: %T", v)
-	}
+	return consumed, nil
 }

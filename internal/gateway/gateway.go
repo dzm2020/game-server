@@ -2,12 +2,13 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"game-server/framework/gen"
-	"game-server/framework/grs"
 	"game-server/framework/network"
 
 	"game-server/framework/pkg/glog"
-	"time"
+
+	"go.uber.org/zap"
 )
 
 type ClientAgentFactory func() (IAgent, error)
@@ -24,26 +25,27 @@ func newGatWay(cfg *Options, system gen.ISystem) *gatWay {
 type gatWay struct {
 	system gen.ISystem
 	cfg    *Options
-	server *network.WebsocketServer
-
-	runErrCh chan error
+	server network.IServer
 
 	registry     *connRegistry
 	agentFactory ClientAgentFactory
 }
 
 func (c *gatWay) Init() error {
-	addr := c.cfg.Address
-	c.server = network.NewWebsocketServer(
-		addr,
-		network.WithCodec(newWSProtocolCodec()),
-		network.WithEventHandler(newEventHandler(c)),
-		network.WithReadLimit(c.cfg.ReadLimit),
-		network.WithPongWait(time.Duration(c.cfg.WsPongWaitSec)*time.Second),
-		network.WithPingPeriod(time.Duration(c.cfg.WsPingPeriodSec)*time.Second),
-		network.WithWriteWait(time.Duration(c.cfg.WriteWaitSec)*time.Second),
-		network.WithSendBuffer(c.cfg.SendBuffer),
-	)
+	if c.cfg == nil {
+		return ErrConfigNil
+	}
+	protoAddr := c.cfg.Network + "://" + c.cfg.Address
+	if c.cfg.Network == "ws" || c.cfg.Network == "wss" {
+		protoAddr = c.cfg.Network + "://" + c.cfg.Address + c.cfg.WsPath
+	}
+	server, err := network.NewServer(newEventHandler(c), protoAddr, network.ServerOptions{
+		SendChanSize: c.cfg.SendBuffer,
+	})
+	if err != nil {
+		return fmt.Errorf("create gateway network server failed: %w", err)
+	}
+	c.server = server
 	return nil
 }
 
@@ -55,14 +57,10 @@ func (c *gatWay) Start(_ context.Context) error {
 	if c.agentFactory == nil {
 		return ErrFactoryNotConfigured
 	}
-
-	c.runErrCh = make(chan error, 1)
-	grs.SafeGo(func() {
-		c.runErrCh <- c.server.Start()
-		close(c.runErrCh)
-	})
-
-	glog.Infof("gateway component started, listen=%s", c.server.Addr)
+	if err := c.server.Start(); err != nil {
+		return err
+	}
+	glog.Info("gateway component started", zap.String("listen", c.server.Addr()))
 	return nil
 }
 
@@ -71,16 +69,8 @@ func (c *gatWay) SetClientAgentFactory(factory ClientAgentFactory) {
 }
 
 func (c *gatWay) Stop(ctx context.Context) error {
-	if err := c.server.ShutdownContext(ctx); err != nil {
-		return err
-	}
-	if c.runErrCh != nil {
-		select {
-		case <-c.runErrCh:
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
+	if c.server != nil {
+		c.server.Shutdown(ctx)
 	}
 	current := c.registry.Reset()
 	for _, pid := range current {

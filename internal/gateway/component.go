@@ -26,9 +26,12 @@ func (c *Component) Init() error {
 		return ErrConfigNil
 	}
 	c.gatWay = newGatWay(cfg, system)
-	return nil
+	return c.gatWay.Init()
 }
 func (c *Component) Start(ctx context.Context) error {
+	if c.gatWay == nil {
+		return ErrComponentNotInited
+	}
 	if !c.cfg.Enable {
 		return nil
 	}
@@ -36,6 +39,9 @@ func (c *Component) Start(ctx context.Context) error {
 	return c.gatWay.Start(ctx)
 }
 func (c *Component) Stop(ctx context.Context) error {
+	if c.gatWay == nil {
+		return nil
+	}
 	if !c.cfg.Enable {
 		return nil
 	}

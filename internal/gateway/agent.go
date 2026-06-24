@@ -38,19 +38,20 @@ func (a *Agent) Push(msg interface{}) error {
 	if a == nil || a.connection == nil || msg == nil {
 		return fmt.Errorf("invalid params")
 	}
-	if !a.connection.Available() {
+	if a.connection.IsStop() {
 		return fmt.Errorf("connection is unavailable")
 	}
-	switch msg.(type) {
+	switch v := msg.(type) {
 	case *gen.Message:
+		return a.connection.Send(gen.Encode(v))
 	case []byte:
+		return a.connection.Send(v)
 	default:
 		return fmt.Errorf("invalid msg type: %T", msg)
 	}
-	return a.connection.Send(msg)
 }
 
-func connID(conn network.IConnection) uint64 {
+func connID(conn network.IConnection) int64 {
 	if conn == nil {
 		return 0
 	}
