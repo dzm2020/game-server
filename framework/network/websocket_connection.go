@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"time"
 
@@ -77,7 +78,7 @@ func (c *WebSocketConnection) Write(p []byte) (n int, err error) {
 
 func (c *WebSocketConnection) Close(err error) (w error) {
 	if !c.Stop() {
-		return ErrConnectionClosed
+		return gen.ErrConnectionClosed
 	}
 
 	timeout := time.Now().Add(1 * time.Second)

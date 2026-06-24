@@ -1,6 +1,7 @@
 package network
 
 import (
+	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"net"
 
@@ -34,13 +35,13 @@ func newUDPConnection(common connCommon, conn *net.UDPConn, remoteAddr *net.UDPA
 
 func (c *UDPConnection) Send(data []byte) error {
 	if c.IsStop() {
-		return ErrConnectionClosed
+		return gen.ErrConnectionClosed
 	}
 	copyData := append([]byte(nil), data...)
 	select {
 	case c.sendChan <- &udpPacket{data: copyData, remoteAddr: c.remoteAddr}:
 	default:
-		return ErrChannelFull
+		return gen.ErrNetworkChannelFull
 	}
 	return nil
 }
@@ -81,7 +82,7 @@ func (c *UDPConnection) writeRcvChan(data []byte) {
 
 func (c *UDPConnection) Close(err error) (w error) {
 	if !c.Stop() {
-		return ErrConnectionClosed
+		return gen.ErrConnectionClosed
 	}
 	if c.udpConnMgr != nil {
 		c.udpConnMgr.RemoveUDP(c.connKey)

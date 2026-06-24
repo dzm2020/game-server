@@ -1,5 +1,7 @@
 package gen
 
+import "fmt"
+
 func NewError(err string, code int32) *Error {
 	return &Error{
 		err:  err,
@@ -63,4 +65,15 @@ var (
 	ErrNodeNil                     = NewError("node is nil", 40)
 	ErrNodeComponentNotRegistered  = NewError("node component not registered", 41)
 	ErrNodeComponentTypeMismatched = NewError("node component type mismatch", 42)
+
+	// network detail
+	ErrNetworkChannelFull         = NewError("network channel full", 43)
+	ErrNetworkHeartTimeout        = NewError("network heart timeout", 44)
+	ErrNetworkWriteTimeout        = NewError("network write timeout", 45)
+	ErrNetworkInvalidProtoAddr    = NewError("network invalid proto address", 46)
+	ErrNetworkUnsupportedProtocol = NewError("network protocol is not supported", 47)
 )
+
+func WrapErrNetworkUnsupportedProtocol(proto string) error {
+	return fmt.Errorf("%w: %s", ErrNetworkUnsupportedProtocol, proto)
+}

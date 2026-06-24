@@ -2,6 +2,7 @@ package network
 
 import (
 	"errors"
+	"game-server/framework/gen"
 	"game-server/framework/pkg/buffer"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
@@ -140,7 +141,7 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 					zap.Int("sendQueueLen", len(c.sendChan)),
 					zap.Int("sendQueueCap", cap(c.sendChan)),
 					zap.Duration("writeTimeoutSecond", c.writeTimeout))
-				return ErrConnWriteTimeout
+				return gen.ErrNetworkWriteTimeout
 			}
 			return err
 		}
@@ -164,7 +165,7 @@ func (c *TCPConnection) process(data []byte) (int, error) {
 
 func (c *TCPConnection) Close(err error) (w error) {
 	if !c.Stop() {
-		return ErrConnectionClosed
+		return gen.ErrConnectionClosed
 	}
 
 	c.baseConn.Close(c, err)

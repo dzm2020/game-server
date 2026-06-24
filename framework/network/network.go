@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"fmt"
+	"game-server/framework/gen"
 	"strings"
 	"sync/atomic"
 )
@@ -54,7 +55,7 @@ func NewServer(handler IHandler, protoAddr string, options ServerOptions) (IServ
 	options = normalization(options)
 	network, address := parseProtoAddr(protoAddr)
 	if network == "" || address == "" {
-		return nil, fmt.Errorf("%w: %s", ErrInvalidProtoAddr, protoAddr)
+		return nil, fmt.Errorf("%w: %s", gen.ErrNetworkInvalidProtoAddr, protoAddr)
 	}
 	path, address := parseWsAddr(address)
 	base := newBaseServer(network, address, handler, options)
@@ -66,7 +67,7 @@ func NewServer(handler IHandler, protoAddr string, options ServerOptions) (IServ
 	case "ws", "wss":
 		return NewWebSocketServer(base, path), nil
 	default:
-		return nil, ErrUnsupportedProtocol(network)
+		return nil, gen.WrapErrNetworkUnsupportedProtocol(network)
 	}
 }
 

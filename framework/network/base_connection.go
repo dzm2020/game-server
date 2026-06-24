@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"game-server/framework/gen"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"game-server/framework/pkg/stopper"
@@ -103,7 +104,7 @@ func (b *baseConn) OnClose(conn IConnection, err error) {
 
 func (b *baseConn) Send(msg []byte) error {
 	if b.IsStop() {
-		return ErrConnectionClosed
+		return gen.ErrConnectionClosed
 	}
 	if msg == nil {
 		return nil
@@ -116,7 +117,7 @@ func (b *baseConn) Send(msg []byte) error {
 			zap.String("network", b.network),
 			zap.Int("queueLen", len(b.sendChan)),
 			zap.Int("queueCap", cap(b.sendChan)))
-		return ErrChannelFull
+		return gen.ErrNetworkChannelFull
 	}
 	return nil
 }
@@ -131,7 +132,7 @@ func (b *baseConn) heartbeat(connection IConnection) {
 		case <-ticker.C:
 			lastActive := b.lastActive.Load()
 			if time.Now().Unix()-lastActive >= b.heartIntervalSecond {
-				_ = connection.Close(ErrConnHeartTimeout)
+				_ = connection.Close(gen.ErrNetworkHeartTimeout)
 			}
 		}
 	}
