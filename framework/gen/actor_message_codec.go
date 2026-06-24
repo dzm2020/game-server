@@ -36,7 +36,7 @@ func Decode(buf []byte) (*Message, int, error) {
 	}
 	l := binary.BigEndian.Uint32(buf)
 	total := HeadLen + int(l)
-	if l > MessageDataMaxSize {
+	if l >= MessageDataMaxSize {
 		return nil, 0, ErrMessageDataOverSize
 	}
 	if len(buf) < total {

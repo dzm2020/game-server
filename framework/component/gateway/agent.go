@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/network"
+	"game-server/framework/pkg/glog"
+
+	"go.uber.org/zap"
 )
 
 type IAgent interface {
@@ -36,10 +39,15 @@ func (a *Agent) SetConnection(connection network.IConnection) {
 
 func (a *Agent) Push(msg interface{}) error {
 	if a == nil || a.connection == nil || msg == nil {
-		return fmt.Errorf("invalid params")
+		glog.Error("网关Actor下行推送参数非法",
+			zap.Bool("agent_nil", a == nil),
+			zap.Bool("message_nil", msg == nil))
+		return ErrInvalidPushParams
 	}
 	if a.connection.IsStop() {
-		return fmt.Errorf("connection is unavailable")
+		glog.Error("网关Actor下行推送连接不可用",
+			zap.Int64("conn_id", a.connection.ID()))
+		return ErrConnectionUnavailable
 	}
 	switch v := msg.(type) {
 	case *gen.Message:
@@ -51,15 +59,10 @@ func (a *Agent) Push(msg interface{}) error {
 	case []byte:
 		return a.connection.Send(v)
 	default:
-		return fmt.Errorf("invalid msg type: %T", msg)
+		glog.Error("网关Actor下行推送消息类型非法",
+			zap.String("message_type", fmt.Sprintf("%T", msg)))
+		return ErrInvalidMessageType
 	}
-}
-
-func connID(conn network.IConnection) int64 {
-	if conn == nil {
-		return 0
-	}
-	return conn.ID()
 }
 
 func SendToClient(ctx gen.IContext, agentPid *gen.PID, msg *gen.Message) error {

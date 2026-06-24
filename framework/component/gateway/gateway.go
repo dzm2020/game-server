@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/network"
 	"game-server/framework/pkg/glog"
@@ -32,7 +31,10 @@ type gatWay struct {
 func (c *gatWay) Init() error {
 	server, err := network.NewServer(newEventHandler(c), c.options.ProtoAddr, c.options.NetworkOptions)
 	if err != nil {
-		return fmt.Errorf("create gateway network server failed: %w", err)
+		glog.Error("网关创建网络服务失败",
+			zap.String("proto_addr", c.options.ProtoAddr),
+			zap.Error(err))
+		return ErrCreateNetworkServer
 	}
 	c.server = server
 	return nil
@@ -42,10 +44,15 @@ func (c *gatWay) Start(_ context.Context) error {
 	if c.server == nil || c.system == nil {
 		return ErrComponentNotInited
 	}
+
+	if c.options.AgentFactory == nil {
+		return ErrAgentFactoryNil
+	}
+
 	if err := c.server.Start(); err != nil {
 		return err
 	}
-	glog.Info("gateway component started", zap.String("listen", c.server.Addr()))
+	glog.Info("网关组件启动成功", zap.String("listen", c.server.Addr()))
 	return nil
 }
 
@@ -71,10 +78,12 @@ func (c *gatWay) ensureClientAgent(conn network.IConnection) (*gen.PID, error) {
 	}
 
 	if err := c.bindConnection(conn); err != nil {
+		glog.Error("网关绑定连接失败", zap.Error(err))
 		return gen.NoSender, err
 	}
 	pid, ok = c.getConnActorPID(conn.ID())
 	if !ok {
+		glog.Error("网关获取连接Actor失败", zap.Int64("client_id", conn.ID()))
 		return gen.NoSender, ErrClientAgentNotFound
 	}
 	return pid, nil
@@ -97,16 +106,24 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 
 	agent, err := c.options.AgentFactory()
 	if err != nil {
-		return fmt.Errorf("build client agent conn_id=%d: %w", conn.ID(), err)
+		glog.Error("网关创建客户端Actor失败",
+			zap.Int64("conn_id", conn.ID()),
+			zap.Error(err))
+		return ErrBuildClientAgent
 	}
 	if agent == nil {
-		return fmt.Errorf("build client agent conn_id=%d: nil handler", conn.ID())
+		glog.Error("网关客户端Actor为空",
+			zap.Int64("conn_id", conn.ID()))
+		return ErrNilClientAgent
 	}
 	agent.SetConnection(conn)
 
 	pid, err := c.system.SpawnActor(agent, gen.SpawnOptions{})
 	if err != nil {
-		return fmt.Errorf("spawn client agent conn_id=%d: %w", conn.ID(), err)
+		glog.Error("网关启动客户端Actor失败",
+			zap.Int64("conn_id", conn.ID()),
+			zap.Error(err))
+		return ErrSpawnClientAgent
 	}
 	c.manager.Bind(conn.ID(), pid)
 	return nil
