@@ -1,33 +1,33 @@
 package gateway
 
 import (
-	"game-server/framework/actor"
+	"game-server/framework/gen"
 	"sync"
 )
 
 type connRegistry struct {
 	mu   sync.RWMutex
-	data map[uint64]actor.PID
+	data map[uint64]*gen.PID
 }
 
 func newConnRegistry() *connRegistry {
-	return &connRegistry{data: make(map[uint64]actor.PID)}
+	return &connRegistry{data: make(map[uint64]*gen.PID)}
 }
 
-func (r *connRegistry) Bind(connID uint64, pid actor.PID) {
+func (r *connRegistry) Bind(connID uint64, pid *gen.PID) {
 	r.mu.Lock()
 	r.data[connID] = pid
 	r.mu.Unlock()
 }
 
-func (r *connRegistry) Get(connID uint64) (actor.PID, bool) {
+func (r *connRegistry) Get(connID uint64) (*gen.PID, bool) {
 	r.mu.RLock()
 	pid, ok := r.data[connID]
 	r.mu.RUnlock()
 	return pid, ok
 }
 
-func (r *connRegistry) Unbind(connID uint64) (actor.PID, bool) {
+func (r *connRegistry) Unbind(connID uint64) (*gen.PID, bool) {
 	r.mu.Lock()
 	pid, ok := r.data[connID]
 	delete(r.data, connID)
@@ -35,10 +35,10 @@ func (r *connRegistry) Unbind(connID uint64) (actor.PID, bool) {
 	return pid, ok
 }
 
-func (r *connRegistry) Reset() map[uint64]actor.PID {
+func (r *connRegistry) Reset() map[uint64]*gen.PID {
 	r.mu.Lock()
 	old := r.data
-	r.data = make(map[uint64]actor.PID)
+	r.data = make(map[uint64]*gen.PID)
 	r.mu.Unlock()
 	return old
 }

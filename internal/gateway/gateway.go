@@ -2,22 +2,17 @@ package gateway
 
 import (
 	"context"
-	"fmt"
-	"game-server/framework/actor"
-	"game-server/framework/config"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/network"
-	"game-server/framework/pkg/component"
+
 	"game-server/framework/pkg/glog"
-	"net"
-	"strconv"
 	"time"
 )
 
 type ClientAgentFactory func() (IAgent, error)
 
-func newGatWay(cfg *config.GatewayConfig, system actor.ISystem) *gatWay {
+func newGatWay(cfg *Options, system gen.ISystem) *gatWay {
 	c := &gatWay{
 		cfg:      cfg,
 		registry: newConnRegistry(),
@@ -27,11 +22,9 @@ func newGatWay(cfg *config.GatewayConfig, system actor.ISystem) *gatWay {
 }
 
 type gatWay struct {
-	component.BaseComponent
-
-	cfg    *config.GatewayConfig
+	system gen.ISystem
+	cfg    *Options
 	server *network.WebsocketServer
-	system actor.ISystem
 
 	runErrCh chan error
 
@@ -40,14 +33,14 @@ type gatWay struct {
 }
 
 func (c *gatWay) Init() error {
-	addr := net.JoinHostPort(c.cfg.Address, strconv.Itoa(c.cfg.Port))
+	addr := c.cfg.Address
 	c.server = network.NewWebsocketServer(
 		addr,
 		network.WithCodec(newWSProtocolCodec()),
 		network.WithEventHandler(newEventHandler(c)),
 		network.WithReadLimit(c.cfg.ReadLimit),
-		network.WithPongWait(time.Duration(c.cfg.PongWaitSec)*time.Second),
-		network.WithPingPeriod(time.Duration(c.cfg.PingPeriodSec)*time.Second),
+		network.WithPongWait(time.Duration(c.cfg.WsPongWaitSec)*time.Second),
+		network.WithPingPeriod(time.Duration(c.cfg.WsPingPeriodSec)*time.Second),
 		network.WithWriteWait(time.Duration(c.cfg.WriteWaitSec)*time.Second),
 		network.WithSendBuffer(c.cfg.SendBuffer),
 	)
@@ -68,10 +61,6 @@ func (c *gatWay) Start(_ context.Context) error {
 		c.runErrCh <- c.server.Start()
 		close(c.runErrCh)
 	})
-
-	if err := c.waitServerReady(2 * time.Second); err != nil {
-		return err
-	}
 
 	glog.Infof("gateway component started, listen=%s", c.server.Addr)
 	return nil
@@ -100,31 +89,6 @@ func (c *gatWay) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (c *gatWay) waitServerReady(timeout time.Duration) error {
-	if c.server == nil {
-		return ErrServerNil
-	}
-
-	deadline := time.Now().Add(timeout)
-	for {
-		select {
-		case runErr := <-c.runErrCh:
-			if runErr != nil {
-				return runErr
-			}
-			return ErrServerExitedEarly
-		case <-c.server.Ready():
-			return nil
-		default:
-		}
-
-		if time.Now().After(deadline) {
-			return fmt.Errorf("gateway startup timeout, listen=%s", c.server.Addr)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-}
-
 func (c *gatWay) routeInbound(conn network.IConnection, msg *gen.Message) error {
 	if c.system == nil {
 		return ErrComponentNotInited
@@ -139,25 +103,25 @@ func (c *gatWay) routeInbound(conn network.IConnection, msg *gen.Message) error 
 	return nil
 }
 
-func (c *gatWay) ensureClientAgent(conn network.IConnection) (actor.PID, error) {
+func (c *gatWay) ensureClientAgent(conn network.IConnection) (*gen.PID, error) {
 	pid, ok := c.getConnActorPID(conn.ID())
 	if ok {
 		return pid, nil
 	}
 
 	if err := c.bindConnection(conn); err != nil {
-		return actor.NoSender, err
+		return gen.NoSender, err
 	}
 	pid, ok = c.getConnActorPID(conn.ID())
 	if !ok {
-		return actor.NoSender, ErrClientAgentNotFound
+		return gen.NoSender, ErrClientAgentNotFound
 	}
 	return pid, nil
 }
 
-func (c *gatWay) dispatchToClientAgent(pid actor.PID, msg *gen.Message) error {
-	return c.system.SendEnvelope(pid, actor.Envelope{
-		Sender:  actor.NoSender,
+func (c *gatWay) dispatchToClientAgent(pid *gen.PID, msg *gen.Message) error {
+	return c.system.SendEnvelope(pid, gen.ActorEnvelope{
+		Sender:  gen.NoSender,
 		Payload: msg,
 	})
 }

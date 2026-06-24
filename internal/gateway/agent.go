@@ -2,25 +2,24 @@ package gateway
 
 import (
 	"fmt"
-	"game-server/framework/actor"
 	"game-server/framework/gen"
 	"game-server/framework/network"
 )
 
 type IAgent interface {
-	actor.IActor
+	gen.IActor
 	SetConnection(connection network.IConnection)
 	GetConnection() network.IConnection
 	Push(msg interface{}) error
 }
 
 type Agent struct {
-	actor.IActor
+	gen.IActor
 	connection network.IConnection
 }
 
-func (a *Agent) OnInit(ctx actor.Context) error {
-	ctx.GetRouter().Register(255, 255, func(ctx actor.Context, request interface{}) error {
+func (a *Agent) OnInit(ctx gen.IContext) error {
+	ctx.GetRouter().Register(255, 255, func(ctx gen.IContext, request interface{}) error {
 		requestMsg, _ := request.(*gen.Message)
 		return a.Push(requestMsg.Data)
 	}, nil)
@@ -58,7 +57,7 @@ func connID(conn network.IConnection) uint64 {
 	return conn.ID()
 }
 
-func SendToClient(ctx actor.Context, pid actor.PID, msg *gen.Message) error {
+func SendToClient(ctx gen.IContext, pid *gen.PID, msg *gen.Message) error {
 	data := gen.Encode(msg)
 	m := gen.NewMessage(255, 255, data)
 	return ctx.Tell(pid, m)

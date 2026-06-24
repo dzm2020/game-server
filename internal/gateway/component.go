@@ -2,29 +2,30 @@ package gateway
 
 import (
 	"context"
-	config2 "game-server/framework/config"
+	"game-server/framework/gen"
 )
 
-func NewComponent() *Component {
-	return &Component{}
+func NewComponent(node gen.INode) *Component {
+	return &Component{
+		node: node,
+	}
 }
 
 type Component struct {
-	cfg *config2.GatewayConfig
+	node gen.INode
 	*gatWay
 }
 
 func (c *Component) Init() error {
-	cfg := config2.GetGatWay()
+	system := c.node.GetSystem()
+	if system == nil {
+		return ErrSystemComponentAbsent
+	}
+	cfg := DefaultConfig()
 	if cfg == nil {
 		return ErrConfigNil
 	}
-
-	if !c.cfg.Enable {
-		return nil
-	}
-	//  todo
-	c.gatWay = newGatWay(cfg, nil)
+	c.gatWay = newGatWay(cfg, system)
 	return nil
 }
 func (c *Component) Start(ctx context.Context) error {

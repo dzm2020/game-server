@@ -2,7 +2,7 @@ package gateway
 
 import (
 	"fmt"
-	"game-server/framework/actor"
+	"game-server/framework/gen"
 	"game-server/framework/network"
 )
 
@@ -26,7 +26,7 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 		return fmt.Errorf("build client agent conn_id=%d: nil handler", conn.ID())
 	}
 	agent.SetConnection(conn)
-	pid, err := c.system.SpawnActor(agent)
+	pid, err := c.system.SpawnActor(agent, gen.SpawnOptions{})
 	if err != nil {
 		return fmt.Errorf("spawn client agent conn_id=%d: %w", conn.ID(), err)
 	}
@@ -41,14 +41,14 @@ func (c *gatWay) unbindConnection(connID uint64) {
 	}
 }
 
-func (c *gatWay) getConnActorPID(connID uint64) (actor.PID, bool) {
+func (c *gatWay) getConnActorPID(connID uint64) (*gen.PID, bool) {
 	return c.registry.Get(connID)
 }
 
-func (c *gatWay) stopConnActor(pid actor.PID) error {
-	if c.system == nil || pid.IsZero() {
+func (c *gatWay) stopConnActor(pid *gen.PID) error {
+	if c.system == nil || pid == nil || pid.IsZero() {
 		return nil
 	}
-	c.system.Stop(pid)
+	c.system.StopProcess(pid)
 	return nil
 }

@@ -2,98 +2,62 @@ package network
 
 import (
 	"crypto/tls"
-	"time"
-
-	"github.com/gorilla/websocket"
+	"net/http"
 )
-
-type WebsocketServerOption func(*WebsocketServer)
 
 const (
-	defaultReadLimit  int64 = 1024 * 1024
-	defaultSendBuffer       = 256
+	defaultSendBufferSize  = 1024 * 4
+	defaultReadBufSize     = 1024 * 4
+	defaultUdpRcvChanSize  = 1024
+	defaultSendChanSize    = 1024
+	defaultHeartTimeoutSec = 5
 )
 
-type serverOptions struct {
-	codec      Codec
-	handler    EventHandler
-	readLimit  int64
-	pongWait   time.Duration
-	pingPeriod time.Duration
-	writeWait  time.Duration
-	sendBuffer int
+type ServerOptions struct {
+	HeartIntervalSecond int64
+	SendChanSize        int
+	ReusePort           bool
+	ReuseAddr           bool
+	WebOptions          WebServerOptions
+	TcpOptions          TcpServerOptions
+	UdpOptions          UdpServerOptions
 }
 
-func defaultServerOptions() serverOptions {
-	return serverOptions{
-		codec:      jsonCodec{},
-		handler:    BaseEventHandler{},
-		readLimit:  defaultReadLimit,
-		pongWait:   60 * time.Second,
-		pingPeriod: 54 * time.Second,
-		writeWait:  10 * time.Second,
-		sendBuffer: defaultSendBuffer,
-	}
+type WebServerOptions struct {
+	TLSConfig   *tls.Config
+	CheckOrigin func(r *http.Request) bool
 }
 
-func WithCodec(codec Codec) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.opts.codec = codec
-	}
+type TcpServerOptions struct {
+	WriteBufferSize int
+	ReadBufferSize  int
+}
+type UdpServerOptions struct {
+	ReadChanSize int
+	SendChanSize int
 }
 
-func WithEventHandler(handler EventHandler) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.opts.handler = handler
+func normalization(opts ServerOptions) ServerOptions {
+	if opts.HeartIntervalSecond <= 0 {
+		opts.HeartIntervalSecond = defaultHeartTimeoutSec
 	}
-}
-
-func WithTLSConfig(cfg *tls.Config) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.TLSConfig = cfg
+	if opts.SendChanSize <= 0 {
+		opts.SendChanSize = defaultSendChanSize
 	}
-}
-
-func WithUpgrader(upgrader websocket.Upgrader) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.Upgrader = upgrader
+	if opts.TcpOptions.ReadBufferSize <= 0 {
+		opts.TcpOptions.ReadBufferSize = defaultReadBufSize
 	}
-}
-
-func WithReadLimit(limit int64) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		if limit <= 0 {
-			s.opts.readLimit = defaultReadLimit
-			return
-		}
-		s.opts.readLimit = limit
+	if opts.TcpOptions.WriteBufferSize <= 0 {
+		opts.TcpOptions.WriteBufferSize = defaultSendBufferSize
 	}
-}
-
-func WithPongWait(d time.Duration) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.opts.pongWait = d
+	if opts.UdpOptions.ReadChanSize <= 0 {
+		opts.UdpOptions.ReadChanSize = defaultUdpRcvChanSize
 	}
-}
-
-func WithPingPeriod(d time.Duration) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.opts.pingPeriod = d
+	if opts.UdpOptions.SendChanSize <= 0 {
+		opts.UdpOptions.SendChanSize = opts.SendChanSize
 	}
-}
-
-func WithWriteWait(d time.Duration) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		s.opts.writeWait = d
+	if opts.WebOptions.CheckOrigin == nil {
+		opts.WebOptions.CheckOrigin = func(r *http.Request) bool { return true }
 	}
-}
-
-func WithSendBuffer(size int) WebsocketServerOption {
-	return func(s *WebsocketServer) {
-		if size <= 0 {
-			s.opts.sendBuffer = defaultSendBuffer
-			return
-		}
-		s.opts.sendBuffer = size
-	}
+	return opts
 }

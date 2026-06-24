@@ -1,8 +1,6 @@
 package gateway
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/network"
@@ -57,50 +55,11 @@ func newWSProtocolCodec() *wsProtocolCodec {
 	return &wsProtocolCodec{}
 }
 
-func (c *wsProtocolCodec) Decode(data []byte) (interface{}, error) {
-	msgList, err := decodeProtocolMessages(data)
-	if err != nil {
-		return nil, err
-	}
-	if len(msgList) == 0 {
-		return nil, errors.New("no protocol message decoded")
-	}
-	if len(msgList) == 1 {
-		return msgList[0], nil
-	}
-	return msgList, nil
+func (c *wsProtocolCodec) Decode(data []byte) (*gen.Message, error) {
+	return gen.Decode(data)
 }
 
-func decodeProtocolMessages(buf []byte) ([]*gen.Message, error) {
-	if len(buf) < protocolHeaderSize {
-		return nil, errors.New("protocol payload too short")
-	}
-
-	msgList := make([]*gen.Message, 0, 1)
-	for len(buf) >= protocolHeaderSize {
-		l := binary.BigEndian.Uint32(buf[0:4])
-		total := protocolHeaderSize + int(l)
-		if len(buf) < total {
-			return nil, errors.New("incomplete protocol frame")
-		}
-
-		msg := &gen.Message{
-			Head: &gen.Head{
-				Len:   l,
-				Cmd:   buf[4],
-				Act:   buf[5],
-				Error: binary.BigEndian.Uint16(buf[6:8]),
-				Index: binary.BigEndian.Uint32(buf[8:12]),
-			},
-		}
-		msg.Data = append([]byte(nil), buf[protocolHeaderSize:total]...)
-		msgList = append(msgList, msg)
-		buf = buf[total:]
-	}
-	return msgList, nil
-}
-
-func (c *wsProtocolCodec) Encode(v interface{}) ([]byte, error) {
+func (c *wsProtocolCodec) Encode(v *gen.Message) ([]byte, error) {
 	switch value := v.(type) {
 	case []byte:
 		return value, nil
