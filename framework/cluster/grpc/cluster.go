@@ -275,8 +275,8 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 	return nil
 }
 
-// Close 关闭集群连接
-func (c *Cluster) Close() {
+// Stop 关闭集群连接
+func (c *Cluster) Stop(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		if c.ctxCancel != nil {
 			c.ctxCancel()
@@ -294,11 +294,7 @@ func (c *Cluster) Close() {
 		c.server.shutdown()
 		glog.Info("集群已关闭", zap.String("node_id", c.GetSelfID()))
 	})
-}
-
-// Shutdown 是 Close 的语义别名，方便与其他组件的生命周期命名保持一致。
-func (c *Cluster) Shutdown() {
-	c.Close()
+	return nil
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {

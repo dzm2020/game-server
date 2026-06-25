@@ -2,7 +2,6 @@ package actor
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"sync"
@@ -66,20 +65,20 @@ func (s *System) SetRemoteInvoker(invoker gen.IRemoteInvoker) {
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
 	if handler == nil {
-		return gen.NoSender, ErrNilHandler
+		return gen.NoSender, gen.ErrActorNilHandler
 	}
 	return s.SpawnActor(messageActorAdapter{fn: handler}, opts)
 }
 
 func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID, error) {
 	if handler == nil {
-		return gen.NoSender, ErrNilHandler
+		return gen.NoSender, gen.ErrActorNilHandler
 	}
 
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	if s.closed.Load() {
-		return gen.NoSender, ErrSystemClosed
+		return gen.NoSender, gen.ErrActorSystemClosed
 	}
 
 	id := s.nextID.Add(1)
@@ -114,7 +113,7 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 func (s *System) addProcess(proc *process) error {
 	if proc.getName() != "" {
 		if _, exists := s.nameDict.GetOrSet(proc.getName(), proc); exists {
-			return fmt.Errorf("%w: %s", ErrActorNameExists, proc.getName())
+			return gen.ErrActorNameExists
 		}
 	}
 	s.processDict.GetOrSet(proc.getPID().ActorID, proc)
@@ -148,7 +147,7 @@ func (s *System) GetProcess(target any) (*process, bool) {
 
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
 	if s.closed.Load() {
-		return ErrSystemClosed
+		return gen.ErrActorSystemClosed
 	}
 	switch to := target.(type) {
 	case *gen.PID:
@@ -165,7 +164,7 @@ func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
 func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
 	proc, ok := s.GetProcess(target)
 	if !ok {
-		return ErrActorNotFound
+		return gen.ErrActorNotFound
 	}
 	return proc.send(gen.ActorEnvelope{
 		Payload: msg,
@@ -175,21 +174,21 @@ func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
 
 func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error {
 	if s.invoker == nil {
-		return ErrRemoteNotSet
+		return gen.ErrActorRemoteInvokerNotSet
 	}
 	return s.invoker.Tell(from, to, msg)
 }
 
 func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
 	if s.closed.Load() {
-		return nil, ErrSystemClosed
+		return nil, gen.ErrActorSystemClosed
 	}
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
 	proc, ok := s.GetProcess(target)
 	if !ok {
-		return nil, ErrActorNotFound
+		return nil, gen.ErrActorNotFound
 	}
 
 	reply := newAskReply()
@@ -213,11 +212,11 @@ func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
 
 func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 	if s.closed.Load() {
-		return ErrSystemClosed
+		return gen.ErrActorSystemClosed
 	}
 	proc, ok := s.GetProcess(target)
 	if !ok {
-		return ErrActorNotFound
+		return gen.ErrActorNotFound
 	}
 	return proc.send(env)
 }
@@ -230,7 +229,7 @@ func (s *System) StopProcess(target any) {
 	proc.requestStop()
 }
 
-func (s *System) Shutdown() {
+func (s *System) Stop(ctx context.Context) {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.cancel()

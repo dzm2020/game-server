@@ -40,7 +40,7 @@ type UdpServerOptions struct {
 	SendChanSize int
 }
 
-func normalization(opts ServerOptions) ServerOptions {
+func Normalization(opts ServerOptions) ServerOptions {
 	if opts.HeartIntervalSecond <= 0 {
 		opts.HeartIntervalSecond = defaultHeartTimeoutSec
 	}

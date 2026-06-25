@@ -107,15 +107,15 @@ func (c *process) onMessage(ctx gen.IContext, actor gen.IActor, env gen.ActorEnv
 
 func (c *process) send(env gen.ActorEnvelope) error {
 	if c.stopped.Load() || c.stopping.Load() {
-		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrStopped))
-		return ErrStopped
+		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(gen.ErrActorProcessStopped))
+		return gen.ErrActorProcessStopped
 	}
 	select {
 	case c.mailbox <- env:
 		return nil
 	default:
-		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(ErrMailboxFull))
-		return ErrMailboxFull
+		glog.Error("actor接收消息错误", zap.String("pid", c.pid.String()), zap.Error(gen.ErrActorMailboxFull))
+		return gen.ErrActorMailboxFull
 	}
 }
 

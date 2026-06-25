@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"context"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -26,7 +27,7 @@ type ISystem interface {
 	DoTask(from *PID, target any, task ActorTask) error
 	SendEnvelope(target any, env ActorEnvelope) error
 	StopProcess(target any)
-	Shutdown()
+	Stop(ctx context.Context) error
 }
 
 type ActorHandler func(IContext)

@@ -24,7 +24,6 @@ type Registry struct {
 
 // New creates a registry using supplied config.
 func New(options gen.ConsulOptions) (*Registry, error) {
-	options = normalization(options)
 	config := toConsulConfig(options)
 
 	client, err := api.NewClient(config)
@@ -98,7 +97,7 @@ func (r *Registry) Unwatch(serviceName, watchID string) {
 	r.Discoverer.Unwatch(serviceName, watchID)
 }
 
-func (r *Registry) Shutdown() {
+func (r *Registry) Stop(ctx context.Context) error {
 	r.runMu.Lock()
 	cancel := r.runCancel
 	r.runCancel = nil
@@ -106,9 +105,5 @@ func (r *Registry) Shutdown() {
 	if cancel != nil {
 		cancel()
 	}
-}
-
-// Close 是 Shutdown 的语义别名，方便统一生命周期调用风格。
-func (r *Registry) Close() {
-	r.Shutdown()
+	return nil
 }

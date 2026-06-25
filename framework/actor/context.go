@@ -130,7 +130,7 @@ func (c *actorContext) DoTask(target any, task gen.ActorTask) error {
 
 func (c *actorContext) Respond(v []byte) error {
 	if c.current.Respond == nil {
-		return ErrNoResponder
+		return gen.ErrActorNoResponder
 	}
 	return c.current.Respond(v)
 }

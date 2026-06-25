@@ -96,10 +96,9 @@ func (c *Component) Stop(ctx context.Context) error {
 
 	if err := c.IRegistry.Deregister(c.node.GetId()); err != nil {
 		glog.Error("注销服务失败", zap.Error(err))
-		c.IRegistry.Shutdown()
 		return err
 	}
 	glog.Info("注销服务", zap.String("node", c.node.GetId()))
-	c.IRegistry.Shutdown()
-	return nil
+
+	return c.IRegistry.Stop(ctx)
 }

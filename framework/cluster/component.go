@@ -75,7 +75,9 @@ func (c *Component) Stop(ctx context.Context) error {
 	if c.ICluster == nil {
 		return nil
 	}
-	c.ICluster.Close()
+	if err := c.ICluster.Stop(ctx); err != nil {
+		return err
+	}
 	glog.Info("集群组件停止成功")
 	return nil
 }

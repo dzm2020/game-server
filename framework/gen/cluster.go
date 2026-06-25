@@ -1,6 +1,9 @@
 package gen
 
-import "game-server/framework/pkg/component"
+import (
+	"context"
+	"game-server/framework/pkg/component"
+)
 
 type IClusterComp interface {
 	component.IComponent
@@ -15,8 +18,5 @@ type ICluster interface {
 	SetDiscovery(discovery IDiscovery)
 	SendToNode(from, to *PID, msg *Message) error
 	Broadcast(to *PID, msg *Message)
-
-	// Close 关闭集群通信并释放资源。
-	// 约定：应可重复调用（幂等）。
-	Close()
+	Stop(ctx context.Context) error
 }

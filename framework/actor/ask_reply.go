@@ -37,6 +37,6 @@ func (r *askReply) wait(timeout time.Duration) ([]byte, error) {
 	case v := <-r.ch:
 		return v, nil
 	case <-timer.C:
-		return nil, ErrAskTimeout
+		return nil, gen.ErrActorAskTimeout
 	}
 }
