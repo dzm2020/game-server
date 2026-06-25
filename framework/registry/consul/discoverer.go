@@ -27,6 +27,11 @@ type Discoverer struct {
 	watchMu     sync.Mutex
 	watching    bool
 	waitTime    time.Duration
+	runCancel   context.CancelFunc
+	runSeq      uint64
+	mainGroup   *grs.Group
+	workerGroup *grs.Group
+	notifyGroup *grs.Group
 	workers     map[string]context.CancelFunc
 	subMu       sync.RWMutex
 	watchers    map[string]map[string]gen.ServiceChangeHandler
@@ -45,6 +50,9 @@ func newDiscoverer(client *api.Client) *Discoverer {
 		cache:       make(map[string][]ServiceInstance),
 		instanceMap: make(map[string]ServiceInstance),
 		waitTime:    30 * time.Second,
+		mainGroup:   grs.NewGroup(),
+		workerGroup: grs.NewGroup(),
+		notifyGroup: grs.NewGroup(),
 		workers:     make(map[string]context.CancelFunc),
 		watchers:    make(map[string]map[string]gen.ServiceChangeHandler),
 	}
@@ -169,26 +177,72 @@ func (d *Discoverer) Unwatch(serviceName, watchID string) {
 //	@param ctx
 //	@return error
 func (d *Discoverer) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	d.watchMu.Lock()
 	if d.watching {
 		d.watchMu.Unlock()
 		return nil
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	d.runSeq++
+	seq := d.runSeq
+	d.runCancel = cancel
 	d.watching = true
 	d.watchMu.Unlock()
 
-	grs.SafeGo(func() {
+	d.mainGroup.Go(func() {
 		glog.Info("运行服务发现协程", zap.Duration("wait", 30*time.Second))
 		defer func() {
 			d.watchMu.Lock()
-			d.watching = false
+			if d.runSeq == seq {
+				d.runCancel = nil
+				d.watching = false
+			}
 			d.watchMu.Unlock()
 			glog.Info("服务发现协程终止")
 		}()
-		if err := d.SyncBlocking(ctx); err != nil {
+		if err := d.SyncBlocking(runCtx); err != nil {
 			glog.Error("运行服务发现协程", zap.Error(err))
 		}
 	})
+	return nil
+}
+
+func (d *Discoverer) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	d.watchMu.Lock()
+	d.runSeq++
+	cancel := d.runCancel
+	d.runCancel = nil
+	d.watching = false
+	workerCancels := make([]context.CancelFunc, 0, len(d.workers))
+	for name, workerCancel := range d.workers {
+		workerCancels = append(workerCancels, workerCancel)
+		delete(d.workers, name)
+	}
+	d.watchMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	for _, workerCancel := range workerCancels {
+		workerCancel()
+	}
+
+	if err := d.mainGroup.Wait(ctx); err != nil {
+		return err
+	}
+	if err := d.workerGroup.Wait(ctx); err != nil {
+		return err
+	}
+	if err := d.notifyGroup.Wait(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -343,7 +397,7 @@ func (d *Discoverer) reconcileServiceWorkers(ctx context.Context, names []string
 			svcName := name
 			serviceCtx, cancel := context.WithCancel(ctx)
 			d.workers[svcName] = cancel
-			grs.SafeGo(func() {
+			d.workerGroup.Go(func() {
 				glog.Info("启动服务实例发现协程", zap.String("service_name", svcName))
 				d.serviceSyncLoop(serviceCtx, svcName, waitTime)
 				glog.Info("结束服务实例发现协程", zap.String("service_name", svcName))
@@ -424,7 +478,7 @@ func (d *Discoverer) notifyWatchers(serviceName string, topology *gen.Topology) 
 	}
 	d.subMu.RUnlock()
 
-	grs.SafeGo(func() {
+	d.notifyGroup.Go(func() {
 		glog.Debug("触发服务的变更监听回调", zap.String("service_name", serviceName))
 		for _, callback := range callbacks {
 			callback(topology)

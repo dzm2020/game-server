@@ -62,6 +62,9 @@ func (r *Registry) SetHealthState(serviceID string, state gen.ServiceHealthState
 }
 
 func (r *Registry) Start(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	r.runMu.Lock()
 	if r.runCancel != nil {
 		r.runMu.Unlock()
@@ -102,12 +105,21 @@ func (r *Registry) Unwatch(serviceName, watchID string) {
 }
 
 func (r *Registry) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	r.runMu.Lock()
 	cancel := r.runCancel
 	r.runCancel = nil
 	r.runMu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if err := r.Discoverer.Stop(ctx); err != nil {
+		return err
+	}
+	if err := r.Registrar.Stop(ctx); err != nil {
+		return err
 	}
 	return nil
 }

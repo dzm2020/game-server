@@ -3,8 +3,8 @@ package network
 import (
 	"context"
 	"fmt"
+	"game-server/framework/grs"
 	"game-server/framework/pkg/stopper"
-	"sync"
 )
 
 func newBaseServer(network, address string, handler IHandler, options ServerOptions) *baseServer {
@@ -15,6 +15,7 @@ func newBaseServer(network, address string, handler IHandler, options ServerOpti
 		protoAddress: fmt.Sprintf("%s:%s", network, address),
 		handler:      handler,
 		connMgr:      NewConnManager(),
+		runGroup:     grs.NewGroup(),
 	}
 	server.ctx, server.cancel = context.WithCancel(context.Background())
 	return server
@@ -26,7 +27,7 @@ type baseServer struct {
 	handler          IHandler
 	network, address string
 	protoAddress     string
-	waitGroup        sync.WaitGroup
+	runGroup         *grs.Group
 	ctx              context.Context
 	cancel           context.CancelFunc
 	connMgr          *ConnManager
@@ -48,19 +49,11 @@ func (s *baseServer) Addr() string {
 func (s *baseServer) Shutdown(ctx context.Context) {
 	s.cancel()
 	if ctx == nil {
-		s.waitGroup.Wait()
+		ctx = context.Background()
+	}
+	if s.runGroup == nil {
 		return
 	}
-
-	done := make(chan struct{})
-	go func() {
-		s.waitGroup.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+	_ = s.runGroup.Wait(ctx)
 	return
 }

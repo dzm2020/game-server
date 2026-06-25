@@ -37,6 +37,7 @@ type PeerConn struct {
 
 	ctx       context.Context
 	cancel    context.CancelFunc
+	runGroup  *grs.Group
 	closeOnce sync.Once
 }
 
@@ -60,12 +61,13 @@ func NewPeer(cfg *PeerConfig) *PeerConn {
 		onClosed:   cfg.onClosed,
 		ctx:        ctx,
 		cancel:     cancel,
+		runGroup:   grs.NewGroup(),
 	}
 	p.run()
 	return p
 }
 func (p *PeerConn) run() {
-	grs.SafeGo(func() {
+	p.runGroup.Go(func() {
 		//  阻塞等待连接成功
 		glog.Info("grpc远程节点连接", zap.String("node_id", p.nodeID), zap.String("address", p.address))
 		if err := p.connect(); err != nil {
@@ -76,13 +78,13 @@ func (p *PeerConn) run() {
 		}
 		glog.Info("grpc远程节点连接成功", zap.String("node_id", p.nodeID), zap.String("address", p.address))
 
-		grs.SafeGo(func() {
+		p.runGroup.Go(func() {
 			glog.Info("grpc远程节点写协程启动", zap.String("node_id", p.nodeID))
 			p.sendLoop()
 			glog.Info("grpc远程节点写协程关闭", zap.String("node_id", p.nodeID))
 		})
 
-		grs.SafeGo(func() {
+		p.runGroup.Go(func() {
 			glog.Info("grpc远程节点读协程启动", zap.String("node_id", p.nodeID))
 			p.recvLoop()
 			glog.Info("grpc远程节点读协程关闭", zap.String("node_id", p.nodeID))
@@ -252,4 +254,16 @@ func (p *PeerConn) Close() {
 
 		glog.Info("grpc远程节点连接已关闭", zap.String("node_id", p.nodeID))
 	})
+}
+
+// Shutdown 主动关闭并等待该 PeerConn 的后台协程退出。
+func (p *PeerConn) Shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	p.Close()
+	if p.runGroup == nil {
+		return nil
+	}
+	return p.runGroup.Wait(ctx)
 }

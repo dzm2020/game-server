@@ -21,6 +21,7 @@ type Registrar struct {
 	ttlMu      sync.RWMutex
 	ttlCancels map[string]context.CancelFunc
 	ttlStates  map[string]ttlState
+	ttlGroup   *grs.Group
 }
 
 type ttlState struct {
@@ -39,6 +40,7 @@ func newRegistrar(client *api.Client) *Registrar {
 		client:     client,
 		ttlCancels: make(map[string]context.CancelFunc),
 		ttlStates:  make(map[string]ttlState),
+		ttlGroup:   grs.NewGroup(),
 	}
 }
 
@@ -184,7 +186,7 @@ func (rr *Registrar) startTTLHeartbeat(serviceID string, ttl time.Duration, note
 	rr.ttlCancels[serviceID] = cancel
 	rr.ttlMu.Unlock()
 
-	grs.SafeGo(func() {
+	rr.ttlGroup.Go(func() {
 		glog.Info("服务TTL协程启动成功", zap.String("service_id", serviceID),
 			zap.Duration("ttl", ttl), zap.Duration("interval", interval))
 
@@ -230,6 +232,29 @@ func (rr *Registrar) stopTTLHeartbeat(serviceID string) {
 		cancel()
 		glog.Info("停止服务TTL心跳协程并清理内存状态", zap.String("service_id", serviceID))
 	}
+}
+
+func (rr *Registrar) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	rr.ttlMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(rr.ttlCancels))
+	for serviceID, cancel := range rr.ttlCancels {
+		cancels = append(cancels, cancel)
+		delete(rr.ttlCancels, serviceID)
+		delete(rr.ttlStates, serviceID)
+	}
+	rr.ttlMu.Unlock()
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+	if rr.ttlGroup == nil {
+		return nil
+	}
+	return rr.ttlGroup.Wait(ctx)
 }
 
 // setTTLState

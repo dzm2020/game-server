@@ -3,7 +3,6 @@ package network
 import (
 	"context"
 	"errors"
-	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"net/http"
 
@@ -50,9 +49,7 @@ func (s *WebSocketServer) Start() error {
 		Handler: mux,
 	}
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
-		defer s.waitGroup.Done()
+	s.runGroup.Go(func() {
 		glog.Info("WebSocket监听", zap.String("addr", s.Addr()), zap.String("path", s.path))
 		if err := s.listenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			glog.Error("WebSocket监听", zap.String("addr", s.Addr()), zap.String("path", s.path), zap.Error(err))
@@ -82,22 +79,16 @@ func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request
 	wsConn := newWebSocketConnection(s.connCommon(), conn)
 	s.connMgr.Add(wsConn)
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		wsConn.readLoop()
-		s.waitGroup.Done()
 	})
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		wsConn.writeLoop()
-		s.waitGroup.Done()
 	})
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		wsConn.heartbeat(wsConn)
-		s.waitGroup.Done()
 	})
 }
 

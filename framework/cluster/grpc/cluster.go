@@ -43,7 +43,9 @@ type Cluster struct {
 
 	startOnce sync.Once
 	startErr  error
+	bgGroup   *grs.Group
 	closeOnce sync.Once
+	stopDone  chan struct{}
 }
 
 func New(options *Options) *Cluster {
@@ -54,6 +56,8 @@ func New(options *Options) *Cluster {
 		ctx:       ctx,
 		ctxCancel: cancel,
 		options:   options,
+		bgGroup:   grs.NewGroup(),
+		stopDone:  make(chan struct{}),
 	}
 	c.server = NewNodeServer(c.options.ListenAddr, c)
 
@@ -90,7 +94,7 @@ func (c *Cluster) start() error {
 	}
 
 	c.tryConnectPeers()
-	grs.SafeGo(func() {
+	c.bgGroup.Go(func() {
 		glog.Info("grpc监控集群变化协程启动", zap.String("node_id", c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
 		c.connectPeers()
 		glog.Info("grpc监控集群变化协程关闭", zap.String("node_id", c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
@@ -292,24 +296,52 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 
 // Stop 关闭集群连接
 func (c *Cluster) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	c.closeOnce.Do(func() {
-		if c.ctxCancel != nil {
-			c.ctxCancel()
-		}
-
-		var peers []*PeerConn
-		c.peers.Range(func(nodeID string, peer *PeerConn) bool {
-			peers = append(peers, peer)
-			return true
+		grs.SafeGo(func() {
+			defer close(c.stopDone)
+			c.shutdown()
 		})
-
-		for _, peer := range peers {
-			peer.Close()
-		}
-		c.server.shutdown()
-		glog.Info("集群已关闭", zap.String("node_id", c.GetSelfID()))
 	})
-	return nil
+	select {
+	case <-c.stopDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *Cluster) shutdown() {
+	if c.ctxCancel != nil {
+		c.ctxCancel()
+	}
+
+	var peers []*PeerConn
+	c.peers.Range(func(nodeID string, peer *PeerConn) bool {
+		peers = append(peers, peer)
+		return true
+	})
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	for _, peer := range peers {
+		if peer == nil {
+			continue
+		}
+		if err := peer.Shutdown(waitCtx); err != nil {
+			glog.Warn("等待远端节点连接关闭超时", zap.String("node_id", peer.nodeID), zap.Error(err))
+		}
+	}
+	if err := c.server.shutdown(waitCtx); err != nil {
+		glog.Warn("等待grpc服务端退出超时", zap.String("node_id", c.GetSelfID()), zap.Error(err))
+	}
+	if err := c.bgGroup.Wait(waitCtx); err != nil {
+		glog.Warn("等待集群后台协程退出超时", zap.String("node_id", c.GetSelfID()), zap.Error(err))
+	}
+	glog.Info("集群已关闭", zap.String("node_id", c.GetSelfID()))
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {

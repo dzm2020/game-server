@@ -32,10 +32,8 @@ func (s *TCPServer) Start() (err error) {
 		return
 	}
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		s.acceptLoop()
-		s.waitGroup.Done()
 	})
 	return
 }
@@ -72,24 +70,18 @@ func (s *TCPServer) newTcpCon(conn net.Conn) {
 
 	s.connMgr.Add(connection)
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		connection.readLoop()
-		s.waitGroup.Done()
 		glog.Info("TCP连接读协程关闭", zap.Int64("connectionId", connection.ID()))
 	})
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		connection.writeLoop()
-		s.waitGroup.Done()
 		glog.Info("TCP连接写协程关闭", zap.Int64("connectionId", connection.ID()))
 	})
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		connection.heartbeat(connection)
-		s.waitGroup.Done()
 	})
 }
 

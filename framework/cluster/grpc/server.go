@@ -22,6 +22,7 @@ func NewNodeServer(address string, dispatcher Dispatcher) *NodeServer {
 	return &NodeServer{
 		address:    address,
 		dispatcher: dispatcher,
+		serveGroup: grs.NewGroup(),
 	}
 }
 
@@ -32,6 +33,7 @@ type NodeServer struct {
 	lis        net.Listener
 	server     *grpc.Server
 	dispatcher Dispatcher
+	serveGroup *grs.Group
 }
 
 // listen
@@ -70,24 +72,32 @@ func (s *NodeServer) Serve() error {
 	if err := s.listen(); err != nil {
 		return err
 	}
-	timeCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	var err error
-	grs.SafeGo(func() {
-		err = s.server.Serve(s.lis)
-		cancel()
-		if err == nil ||
-			errors.Is(err, grpc.ErrServerStopped) ||
-			errors.Is(err, net.ErrClosed) ||
-			strings.Contains(err.Error(), "use of closed network connection") {
+	startCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	serveErrCh := make(chan error, 1)
+	s.serveGroup.Go(func() {
+		err := s.server.Serve(s.lis)
+		if isNodeServerStopErr(err) {
 			glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
+			select {
+			case serveErrCh <- nil:
+			default:
+			}
 			return
+		}
+		select {
+		case serveErrCh <- err:
+		default:
 		}
 		glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
 	})
+
 	select {
-	case <-timeCtx.Done():
+	case err := <-serveErrCh:
+		return err
+	case <-startCtx.Done():
+		return nil
 	}
-	return err
 }
 
 // Stream 实现双向流
@@ -109,7 +119,10 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 	}
 }
 
-func (s *NodeServer) shutdown() {
+func (s *NodeServer) shutdown(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	glog.Info("grpc集群服务端关闭")
 	if s.lis != nil {
 		_ = s.lis.Close()
@@ -126,4 +139,12 @@ func (s *NodeServer) shutdown() {
 			s.server.Stop()
 		}
 	}
+	return s.serveGroup.Wait(ctx)
+}
+
+func isNodeServerStopErr(err error) bool {
+	return err == nil ||
+		errors.Is(err, grpc.ErrServerStopped) ||
+		errors.Is(err, net.ErrClosed) ||
+		strings.Contains(err.Error(), "use of closed network connection")
 }

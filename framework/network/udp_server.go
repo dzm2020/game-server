@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"net"
@@ -38,15 +37,11 @@ func (s *UDPServer) Start() error {
 		return err
 	}
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		s.readLoop()
-		s.waitGroup.Done()
 	})
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		s.writeLoop()
-		s.waitGroup.Done()
 	})
 
 	glog.Info("UDP服务器监听", zap.String("address", s.Addr()))
@@ -140,16 +135,12 @@ func (s *UDPServer) addConnection(connKey string, remoteAddr *net.UDPAddr) *UDPC
 	}
 	s.connMgr.Add(udpConn)
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		udpConn.readLoop()
-		s.waitGroup.Done()
 	})
 
-	s.waitGroup.Add(1)
-	grs.SafeGo(func() {
+	s.runGroup.Go(func() {
 		udpConn.heartbeat(udpConn)
-		s.waitGroup.Done()
 	})
 
 	return udpConn
