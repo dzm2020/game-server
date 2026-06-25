@@ -74,6 +74,10 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	if handler == nil {
 		return gen.NoSender, gen.ErrActorNilHandler
 	}
+	opts = gen.NormalizationSpawnOptions(opts)
+	if err := gen.ValidateSpawnOptions(opts); err != nil {
+		return gen.NoSender, err
+	}
 
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
@@ -82,16 +86,12 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	}
 
 	id := s.nextID.Add(1)
-	mailboxSize := 1024
-	if opts.MailboxSize > 0 {
-		mailboxSize = opts.MailboxSize
-	}
 	pid := gen.NewPID(id, opts.Name, s.nodeID)
 	runCtx, cancel := context.WithCancel(s.runCtx)
 	proc := &process{
 		system:   s,
 		pid:      pid,
-		mailbox:  make(chan gen.ActorEnvelope, mailboxSize),
+		mailbox:  make(chan gen.ActorEnvelope, opts.MailboxSize),
 		initArgs: append([]any(nil), opts.InitArgs...),
 		runCtx:   runCtx,
 		cancel:   cancel,
@@ -184,7 +184,7 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 		return nil, gen.ErrActorSystemClosed
 	}
 	if timeout <= 0 {
-		timeout = 3 * time.Second
+		timeout = gen.DefaultActorAskTimeout
 	}
 	proc, ok := s.GetProcess(target)
 	if !ok {
@@ -229,10 +229,23 @@ func (s *System) StopProcess(target any) {
 	proc.requestStop()
 }
 
-func (s *System) Stop(ctx context.Context) {
-	s.closeOnce.Do(func() {
-		s.closed.Store(true)
-		s.cancel()
-		s.wg.Wait()
-	})
+func (s *System) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	done := make(chan struct{})
+	go func() {
+		s.closeOnce.Do(func() {
+			s.closed.Store(true)
+			s.cancel()
+			s.wg.Wait()
+		})
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

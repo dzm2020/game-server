@@ -53,7 +53,11 @@ type Node struct {
 }
 
 func (n *Node) init(options gen.NodeOptions) {
-	options = gen.NormalizationNodeOptions(options)
+	options = gen.NormalizeNodeOptions(options)
+	if err := gen.ValidateNodeOptions(options); err != nil {
+		panic(err)
+	}
+	n.options = options
 
 	logOptions := []zap.Option{
 		zap.WithPanicHook(panicHook{

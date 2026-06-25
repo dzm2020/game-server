@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/network"
 )
@@ -19,4 +20,17 @@ func normalization(opts Options) Options {
 	}
 	opts.NetworkOptions = network.Normalization(opts.NetworkOptions)
 	return opts
+}
+
+func validate(opts Options) error {
+	if opts.ProtoAddr == "" {
+		return fmt.Errorf("%w: proto address is empty", gen.ErrNetworkInvalidProtoAddr)
+	}
+	if opts.AgentFactory == nil {
+		return ErrAgentSpawnerNil
+	}
+	if err := network.Validate(opts.NetworkOptions); err != nil {
+		return err
+	}
+	return nil
 }

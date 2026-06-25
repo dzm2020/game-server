@@ -2,6 +2,7 @@ package gen
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -82,6 +83,27 @@ type SpawnOptions struct {
 	MailboxSize int
 	InitArgs    []any
 	Route       IActorRoute
+}
+
+const (
+	defaultActorMailboxSize = 1024
+	DefaultActorAskTimeout  = 3 * time.Second
+)
+
+// NormalizationSpawnOptions 统一补齐 SpawnOptions 默认值。
+func NormalizationSpawnOptions(opts SpawnOptions) SpawnOptions {
+	if opts.MailboxSize <= 0 {
+		opts.MailboxSize = defaultActorMailboxSize
+	}
+	return opts
+}
+
+// ValidateSpawnOptions 校验 SpawnOptions 是否满足运行约束。
+func ValidateSpawnOptions(opts SpawnOptions) error {
+	if opts.MailboxSize <= 0 {
+		return fmt.Errorf("invalid actor mailbox size: %d", opts.MailboxSize)
+	}
+	return nil
 }
 
 type IActorRoute interface {

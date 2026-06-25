@@ -53,6 +53,9 @@ func NewServer(handler IHandler, protoAddr string, options ServerOptions) (IServ
 		handler = new(EmptyHandler)
 	}
 	options = normalization(options)
+	if err := validate(options); err != nil {
+		return nil, err
+	}
 	network, address := parseProtoAddr(protoAddr)
 	if network == "" || address == "" {
 		return nil, fmt.Errorf("%w: %s", gen.ErrNetworkInvalidProtoAddr, protoAddr)

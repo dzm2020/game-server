@@ -24,6 +24,10 @@ type Registry struct {
 
 // New creates a registry using supplied config.
 func New(options gen.ConsulOptions) (*Registry, error) {
+	options = normalization(options)
+	if err := validate(options); err != nil {
+		return nil, err
+	}
 	config := toConsulConfig(options)
 
 	client, err := api.NewClient(config)

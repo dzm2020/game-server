@@ -47,6 +47,7 @@ type Cluster struct {
 }
 
 func New(options *Options) *Cluster {
+	options = normalization(options)
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Cluster{
 		peers:     maputil.NewConcurrentMap[string, *PeerConn](10),
@@ -54,7 +55,7 @@ func New(options *Options) *Cluster {
 		ctxCancel: cancel,
 		options:   options,
 	}
-	c.server = NewNodeServer(options.ListenAddr, c)
+	c.server = NewNodeServer(c.options.ListenAddr, c)
 
 	return c
 }
@@ -71,12 +72,15 @@ func (c *Cluster) SetDiscovery(discovery gen.IDiscovery) {
 func (c *Cluster) Start(ctx context.Context) error {
 	_ = ctx
 	c.startOnce.Do(func() {
+		if err := validate(c.options); err != nil {
+			c.startErr = err
+			return
+		}
 		c.startErr = c.start()
 	})
 	return c.startErr
 }
 
-// Run 兼容旧命名，等价于 Start。
 func (c *Cluster) start() error {
 	glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
 

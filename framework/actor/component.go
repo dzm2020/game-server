@@ -44,7 +44,7 @@ func (c *Component) Start(ctx context.Context) error {
 
 func (c *Component) Stop(ctx context.Context) error {
 	if c.ISystem != nil {
-		c.ISystem.Stop(ctx)
+		return c.ISystem.Stop(ctx)
 	}
 	return nil
 }

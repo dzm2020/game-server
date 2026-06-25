@@ -2,6 +2,7 @@ package network
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -40,7 +41,7 @@ type UdpServerOptions struct {
 	SendChanSize int
 }
 
-func Normalization(opts ServerOptions) ServerOptions {
+func normalization(opts ServerOptions) ServerOptions {
 	if opts.HeartIntervalSecond <= 0 {
 		opts.HeartIntervalSecond = defaultHeartTimeoutSec
 	}
@@ -66,4 +67,40 @@ func Normalization(opts ServerOptions) ServerOptions {
 		opts.WebOptions.CheckOrigin = func(r *http.Request) bool { return true }
 	}
 	return opts
+}
+
+func validate(opts ServerOptions) error {
+	if opts.HeartIntervalSecond <= 0 {
+		return fmt.Errorf("invalid network heart interval second: %d", opts.HeartIntervalSecond)
+	}
+	if opts.SendChanSize <= 0 {
+		return fmt.Errorf("invalid network send chan size: %d", opts.SendChanSize)
+	}
+	if opts.TcpOptions.ReadBufferSize <= 0 {
+		return fmt.Errorf("invalid tcp read buffer size: %d", opts.TcpOptions.ReadBufferSize)
+	}
+	if opts.TcpOptions.WriteBufferSize <= 0 {
+		return fmt.Errorf("invalid tcp write buffer size: %d", opts.TcpOptions.WriteBufferSize)
+	}
+	if opts.TcpOptions.WriteTimeout <= 0 {
+		return fmt.Errorf("invalid tcp write timeout: %s", opts.TcpOptions.WriteTimeout)
+	}
+	if opts.UdpOptions.ReadChanSize <= 0 {
+		return fmt.Errorf("invalid udp read chan size: %d", opts.UdpOptions.ReadChanSize)
+	}
+	if opts.UdpOptions.SendChanSize <= 0 {
+		return fmt.Errorf("invalid udp send chan size: %d", opts.UdpOptions.SendChanSize)
+	}
+	if opts.WebOptions.CheckOrigin == nil {
+		return fmt.Errorf("invalid web check-origin handler: nil")
+	}
+	return nil
+}
+
+func Normalization(opts ServerOptions) ServerOptions {
+	return normalization(opts)
+}
+
+func Validate(opts ServerOptions) error {
+	return validate(opts)
 }

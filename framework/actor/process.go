@@ -7,7 +7,6 @@ import (
 	"game-server/framework/pkg/glog"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"go.uber.org/zap"
 )
@@ -50,7 +49,7 @@ func (c *process) run(actor gen.IActor) {
 		initArgs:   c.initArgs,
 		done:       c.runCtx.Done(),
 		actor:      actor,
-		askTimeout: time.Second * 3,
+		askTimeout: gen.DefaultActorAskTimeout,
 		route:      c.route,
 	}
 

@@ -23,6 +23,9 @@ func (c *Component) Init() error {
 	if system == nil {
 		return ErrSystemComponentAbsent
 	}
+	if err := validate(c.options); err != nil {
+		return err
+	}
 	c.gatWay = newGatWay(c.options, system)
 	return c.gatWay.Init()
 }
