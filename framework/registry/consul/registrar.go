@@ -58,7 +58,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 
 	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
 	if err != nil {
-		glog.Error("Consul注册服务实例", zap.String("address", reg.RpcAddress), zap.Error(err))
+		glog.Error("Consul注册服务实例", glog.Component("registry.consul.registrar"), zap.String("address", reg.RpcAddress), glog.Err(err))
 		return err
 	}
 
@@ -85,7 +85,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 	}
 
 	if err = rr.client.Agent().ServiceRegister(serviceReg); err != nil {
-		glog.Error("Consul注册服务实例", zap.String("service_id", reg.ID), zap.Error(err))
+		glog.Error("Consul注册服务实例", glog.Component("registry.consul.registrar"), zap.String("service_id", reg.ID), glog.Err(err))
 		return err
 	}
 
@@ -112,7 +112,7 @@ func (rr *Registrar) Deregister(serviceID string) error {
 		return gen.ErrConsulServiceIDRequired
 	}
 	if err := rr.client.Agent().ServiceDeregister(serviceID); err != nil {
-		glog.Error("deregister service failed", zap.String("service_id", serviceID), zap.Error(err))
+		glog.Error("deregister service failed", glog.Component("registry.consul.registrar"), zap.String("service_id", serviceID), glog.Err(err))
 		return fmt.Errorf("deregister service: %w", err)
 	}
 	rr.stopTTLHeartbeat(serviceID)
@@ -129,7 +129,7 @@ func (rr *Registrar) Deregister(serviceID string) error {
 //	@return error
 func (rr *Registrar) SetHealthState(serviceID string, state gen.ServiceHealthState) error {
 	if err := rr.setTTLState(serviceID, "", state); err != nil {
-		glog.Error("set ttl pass state failed", zap.String("service_id", serviceID), zap.Error(err))
+		glog.Error("set ttl pass state failed", glog.Component("registry.consul.registrar"), zap.String("service_id", serviceID), glog.Err(err))
 		return err
 	}
 	glog.Info("ttl state updated", zap.String("service_id", serviceID), zap.String("state", state))
@@ -154,7 +154,7 @@ func (rr *Registrar) updateTTL(serviceID, note, status string) error {
 		checkID = "service:" + checkID
 	}
 	if err := rr.client.Agent().UpdateTTL(checkID, note, status); err != nil {
-		glog.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note), zap.Error(err))
+		glog.Error("TTL定时更新服务状态", glog.Component("registry.consul.registrar"), zap.String("service_id", serviceID), zap.String("note", note), glog.Err(err))
 		return err
 	}
 	glog.Debug("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("note", note), zap.String("status", status))

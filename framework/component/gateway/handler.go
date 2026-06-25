@@ -21,14 +21,18 @@ func (h *eventHandler) OnConnect(conn network.IConnection) error {
 		return nil
 	}
 	if err := h.g.bindConnection(conn); err != nil {
+
 		glog.Error("网关绑定客户端Actor失败",
-			zap.Int64("conn_id", conn.ID()),
-			zap.Error(err))
+			glog.Component("gateway.handler"),
+			glog.ConnID(conn.ID()),
+			glog.Err(err))
 		_ = conn.Close(err)
 		return err
 	}
+
 	glog.Info("网关客户端连接建立",
-		zap.Int64("conn_id", conn.ID()),
+		glog.Component("gateway.handler"),
+		glog.ConnID(conn.ID()),
 		zap.String("remote", conn.RemoteAddr()))
 	return nil
 }
@@ -38,10 +42,12 @@ func (h *eventHandler) OnClose(conn network.IConnection, err error) {
 		return
 	}
 	h.g.unbindConnection(conn.ID())
+
 	glog.Info("网关客户端连接断开",
-		zap.Int64("conn_id", conn.ID()),
+		glog.Component("gateway.handler"),
+		glog.ConnID(conn.ID()),
 		zap.String("remote", conn.RemoteAddr()),
-		zap.Error(err))
+		glog.Err(err))
 }
 
 func (h *eventHandler) OnMessage(conn network.IConnection, data []byte) (int, error) {
@@ -49,7 +55,8 @@ func (h *eventHandler) OnMessage(conn network.IConnection, data []byte) (int, er
 	for consumed < len(data) {
 		msg, n, err := gen.Decode(data[consumed:])
 		if err != nil {
-			glog.Error("网关解码消息失败", zap.Error(err))
+
+			glog.Error("网关解码消息失败", glog.Component("gateway.handler"), glog.ConnID(conn.ID()), glog.Err(err))
 			return consumed, err
 		}
 		if n == 0 {

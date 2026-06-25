@@ -1,6 +1,8 @@
 package gen
 
-import "time"
+import (
+	"time"
+)
 
 type IRemoteInvoker interface {
 	Tell(from *PID, target *PID, msg *Message) error

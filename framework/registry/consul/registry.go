@@ -32,7 +32,7 @@ func New(options gen.ConsulOptions) (*Registry, error) {
 
 	client, err := api.NewClient(config)
 	if err != nil {
-		glog.Error("consul新建客户端", zap.Error(err))
+		glog.Error("consul新建客户端", glog.Component("registry.consul"), glog.Err(err))
 		return nil, err
 	}
 	registry := &Registry{

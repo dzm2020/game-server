@@ -3,6 +3,7 @@ package network
 import (
 	"errors"
 	"game-server/framework/gen"
+	"game-server/framework/obs"
 	"game-server/framework/pkg/buffer"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
@@ -60,7 +61,8 @@ func (c *TCPConnection) readLoop() {
 				return
 			}
 			if !errors.Is(err, net.ErrClosed) {
-				glog.Error("TCP连接读取错误", zap.Int64("connectionId", c.ID()), zap.Error(err))
+				obs.Inc("network.tcp_read_error_total")
+				glog.Error("TCP连接读取错误", glog.Component("network.tcp"), glog.ConnID(c.ID()), glog.Err(err))
 			}
 			return
 		}
@@ -135,8 +137,10 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
+				obs.Inc("network.tcp_write_timeout_total")
 				glog.Warn("TCP写入超时",
-					zap.Int64("connectionId", c.ID()),
+					glog.Component("network.tcp"),
+					glog.ConnID(c.ID()),
 					zap.Int("pendingWriteBytes", c.writeBuffer.Len()),
 					zap.Int("sendQueueLen", len(c.sendChan)),
 					zap.Int("sendQueueCap", cap(c.sendChan)),
@@ -170,7 +174,8 @@ func (c *TCPConnection) Close(err error) (w error) {
 
 	c.baseConn.Close(c, err)
 
-	glog.Info("TCP连接断开", zap.Int64("connectionId", c.ID()), zap.Error(err))
+	obs.Inc("network.tcp_close_total")
+	glog.Info("TCP连接断开", glog.Component("network.tcp"), glog.ConnID(c.ID()), glog.Err(err))
 	return
 }
 

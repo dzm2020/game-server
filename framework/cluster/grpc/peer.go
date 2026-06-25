@@ -20,6 +20,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const peerComponent = "cluster.grpc.peer"
+
 // PeerConn 节点连接
 type PeerConn struct {
 	mu sync.RWMutex
@@ -35,10 +37,11 @@ type PeerConn struct {
 	dispatcher Dispatcher
 	onClosed   func(nodeID string, peer *PeerConn)
 
-	ctx       context.Context
-	cancel    context.CancelFunc
 	runGroup  *grs.Group
 	closeOnce sync.Once
+
+	ctx        context.Context
+	cancelFunc context.CancelFunc
 }
 
 // PeerConfig 节点配置
@@ -51,43 +54,41 @@ type PeerConfig struct {
 }
 
 // NewPeer 创建节点连接
-func NewPeer(cfg *PeerConfig) *PeerConn {
-	ctx, cancel := context.WithCancel(context.Background())
+func NewPeer(runGroup *grs.Group, cfg *PeerConfig) *PeerConn {
 	p := &PeerConn{
 		nodeID:     cfg.nodeID,
 		address:    cfg.address,
 		sendCh:     cfg.sendCh,
 		dispatcher: cfg.dispatcher,
 		onClosed:   cfg.onClosed,
-		ctx:        ctx,
-		cancel:     cancel,
-		runGroup:   grs.NewGroup(),
+		runGroup:   runGroup,
 	}
+	p.ctx, p.cancelFunc = context.WithCancel(runGroup.Context())
 	p.run()
 	return p
 }
 func (p *PeerConn) run() {
-	p.runGroup.Go(func() {
+	p.runGroup.Go(func(ctx context.Context) {
 		//  阻塞等待连接成功
-		glog.Info("grpc远程节点连接", zap.String("node_id", p.nodeID), zap.String("address", p.address))
+		glog.Info("grpc远程节点连接", glog.Component(peerComponent), glog.NodeID(p.nodeID), zap.String("address", p.address))
 		if err := p.connect(); err != nil {
-			glog.Error("grpc远程节点连接失败", zap.String("node_id", p.nodeID),
-				zap.String("address", p.address), zap.Error(err))
+			glog.Error("grpc远程节点连接失败", glog.Component(peerComponent), glog.NodeID(p.nodeID), zap.String("address", p.address), glog.Err(err))
 			p.Close()
 			return
 		}
-		glog.Info("grpc远程节点连接成功", zap.String("node_id", p.nodeID), zap.String("address", p.address))
 
-		p.runGroup.Go(func() {
-			glog.Info("grpc远程节点写协程启动", zap.String("node_id", p.nodeID))
-			p.sendLoop()
-			glog.Info("grpc远程节点写协程关闭", zap.String("node_id", p.nodeID))
+		glog.Info("grpc远程节点连接成功", glog.Component(peerComponent), glog.NodeID(p.nodeID), zap.String("address", p.address))
+
+		p.runGroup.Go(func(ctx context.Context) {
+			glog.Info("grpc远程节点写协程启动", glog.Component(peerComponent), glog.NodeID(p.nodeID))
+			p.sendLoop(ctx)
+			glog.Info("grpc远程节点写协程关闭", glog.Component(peerComponent), glog.NodeID(p.nodeID))
 		})
 
-		p.runGroup.Go(func() {
-			glog.Info("grpc远程节点读协程启动", zap.String("node_id", p.nodeID))
-			p.recvLoop()
-			glog.Info("grpc远程节点读协程关闭", zap.String("node_id", p.nodeID))
+		p.runGroup.Go(func(ctx context.Context) {
+			glog.Info("grpc远程节点读协程启动", glog.Component(peerComponent), glog.NodeID(p.nodeID))
+			p.recvLoop(ctx)
+			glog.Info("grpc远程节点读协程关闭", glog.Component(peerComponent), glog.NodeID(p.nodeID))
 		})
 	})
 }
@@ -129,9 +130,9 @@ func (p *PeerConn) connect() error {
 
 	client := NewNodeServiceClient(conn)
 
-	stream, err := client.Stream(p.ctx, grpc.WaitForReady(true))
+	stream, err := client.Stream(p.runGroup.Context(), grpc.WaitForReady(true))
 	if err != nil {
-		glog.Error("grpc远程节点流失败", zap.String("node_id", p.nodeID), zap.Error(err))
+		glog.Error("grpc远程节点流失败", glog.Component(peerComponent), glog.NodeID(p.nodeID), glog.Err(err))
 		conn.Close()
 		return err
 	}
@@ -145,23 +146,26 @@ func (p *PeerConn) connect() error {
 }
 
 // sendLoop 发送循环
-func (p *PeerConn) sendLoop() {
+func (p *PeerConn) sendLoop(ctx context.Context) {
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
-		case msg, _ := <-p.sendCh:
+		case msg, ok := <-p.sendCh:
+			if !ok {
+				return
+			}
 			p.mu.RLock()
 			stream := p.stream
 			p.mu.RUnlock()
 
 			if stream == nil {
-				glog.Error("grpc远程节点发送消息失败", zap.String("node_id", p.nodeID))
+				glog.Error("grpc远程节点发送消息失败", glog.Component(peerComponent), glog.NodeID(p.nodeID))
 				continue
 			}
 
 			if err := stream.Send(msg); err != nil {
-				glog.Error("grpc远程节点发送消息失败", zap.String("node_id", p.nodeID), zap.Error(err))
+				glog.Error("grpc远程节点发送消息失败", glog.Component(peerComponent), glog.NodeID(p.nodeID), glog.Err(err))
 				p.Close()
 				return
 			}
@@ -170,7 +174,7 @@ func (p *PeerConn) sendLoop() {
 }
 
 // recvLoop 接收循环
-func (p *PeerConn) recvLoop() {
+func (p *PeerConn) recvLoop(ctx context.Context) {
 	for {
 		p.mu.RLock()
 		stream := p.stream
@@ -184,17 +188,18 @@ func (p *PeerConn) recvLoop() {
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
 			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				glog.Info("grpc远程节点流接收消息", zap.String("node_id", p.nodeID), zap.Error(err))
+				glog.Info("grpc远程节点流接收消息", glog.Component(peerComponent), glog.NodeID(p.nodeID), glog.Err(err))
 				p.Close()
 				return
 			}
-			glog.Error("grpc远程节点流接收消息", zap.String("node_id", p.nodeID), zap.Error(err))
+
+			glog.Error("grpc远程节点流接收消息", glog.Component(peerComponent), glog.NodeID(p.nodeID), glog.Err(err))
 			p.Close()
 			return
 
 		}
 		if err = p.dispatcher.Dispatch(msg); err != nil {
-			glog.Error("grpc远程节点流接收消息", zap.String("node_id", p.nodeID), zap.Error(err))
+			glog.Error("grpc远程节点流接收消息", glog.Component(peerComponent), glog.NodeID(p.nodeID), glog.Err(err))
 		}
 	}
 }
@@ -202,14 +207,14 @@ func (p *PeerConn) recvLoop() {
 func (p *PeerConn) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
 		err := gen.ErrClusterPeerNotConnected
-		glog.Error("grpc远程节点发送队列写入失败", zap.String("target_node_id", p.nodeID), zap.Error(err))
+		glog.Error("grpc远程节点发送队列写入失败", glog.Component(peerComponent), zap.String("target_node_id", p.nodeID), glog.Err(err))
 		return err
 	}
 	select {
 	case p.sendCh <- msg:
 	default:
 		err := gen.ErrClusterSendChannelFull
-		glog.Error("grpc远程节点发送队列写入失败", zap.String("target_node_id", p.nodeID), zap.Error(err))
+		glog.Error("grpc远程节点发送队列写入失败", glog.Component(peerComponent), zap.String("target_node_id", p.nodeID), glog.Err(err))
 		return err
 	}
 	return nil
@@ -230,8 +235,11 @@ func (p *PeerConn) IsConnected() bool {
 // Close 关闭节点连接
 func (p *PeerConn) Close() {
 	p.closeOnce.Do(func() {
+		if p.cancelFunc != nil {
+			p.cancelFunc()
+		}
+
 		p.mu.Lock()
-		cancel := p.cancel
 		stream := p.stream
 		conn := p.conn
 
@@ -239,9 +247,6 @@ func (p *PeerConn) Close() {
 		p.conn = nil
 		p.mu.Unlock()
 
-		if cancel != nil {
-			cancel()
-		}
 		if stream != nil {
 			_ = stream.CloseSend()
 		}
@@ -251,19 +256,6 @@ func (p *PeerConn) Close() {
 		if p.onClosed != nil {
 			p.onClosed(p.nodeID, p)
 		}
-
-		glog.Info("grpc远程节点连接已关闭", zap.String("node_id", p.nodeID))
+		glog.Info("grpc远程节点连接已关闭", glog.Component(peerComponent), glog.NodeID(p.nodeID))
 	})
-}
-
-// Shutdown 主动关闭并等待该 PeerConn 的后台协程退出。
-func (p *PeerConn) Shutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	p.Close()
-	if p.runGroup == nil {
-		return nil
-	}
-	return p.runGroup.Wait(ctx)
 }

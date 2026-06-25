@@ -34,7 +34,7 @@ func (c *Component) Init() error {
 
 	reg, err := consul.New(options.Consul)
 	if err != nil {
-		glog.Error("consul初始化失败", zap.Error(err))
+		glog.Error("consul初始化失败", glog.Component("registry.component"), glog.Err(err))
 		return err
 	}
 	c.IRegistry = reg
@@ -62,7 +62,7 @@ func (c *Component) Start(ctx context.Context) error {
 		RpcAddress: c.node.GetRpcAddress(),
 	}
 	if err := c.Register(reg); err != nil {
-		glog.Error("注册服务失败", zap.Error(err))
+		glog.Error("注册服务失败", glog.Component("registry.component"), glog.NodeID(c.node.GetId()), glog.Err(err))
 		return err
 	}
 
@@ -95,7 +95,7 @@ func (c *Component) Stop(ctx context.Context) error {
 	}
 
 	if err := c.IRegistry.Deregister(c.node.GetId()); err != nil {
-		glog.Error("注销服务失败", zap.Error(err))
+		glog.Error("注销服务失败", glog.Component("registry.component"), glog.NodeID(c.node.GetId()), glog.Err(err))
 		return err
 	}
 	glog.Info("注销服务", zap.String("node", c.node.GetId()))

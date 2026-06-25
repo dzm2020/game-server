@@ -51,13 +51,17 @@ func (a *Agent) SetConnection(connection network.IConnection) {
 func (a *Agent) Push(msg interface{}) error {
 	if a == nil || a.connection == nil || msg == nil {
 		glog.Error("网关Actor下行推送参数非法",
+			glog.Component("gateway.agent"),
 			zap.Bool("agent_nil", a == nil),
-			zap.Bool("message_nil", msg == nil))
+			zap.Bool("message_nil", msg == nil),
+			glog.Err(ErrInvalidPushParams))
 		return ErrInvalidPushParams
 	}
 	if a.connection.IsStop() {
 		glog.Error("网关Actor下行推送连接不可用",
-			zap.Int64("conn_id", a.connection.ID()))
+			glog.Component("gateway.agent"),
+			glog.ConnID(a.connection.ID()),
+			glog.Err(ErrConnectionUnavailable))
 		return ErrConnectionUnavailable
 	}
 	switch v := msg.(type) {
@@ -66,12 +70,22 @@ func (a *Agent) Push(msg interface{}) error {
 		if err != nil {
 			return err
 		}
-		return a.connection.Send(data)
+		if err := a.connection.Send(data); err != nil {
+			return err
+		}
+
+		return nil
 	case []byte:
-		return a.connection.Send(v)
+		if err := a.connection.Send(v); err != nil {
+			return err
+		}
+		return nil
 	default:
+
 		glog.Error("网关Actor下行推送消息类型非法",
-			zap.String("message_type", fmt.Sprintf("%T", msg)))
+			glog.Component("gateway.agent"),
+			zap.String("message_type", fmt.Sprintf("%T", msg)),
+			glog.Err(ErrInvalidMessageType))
 		return ErrInvalidMessageType
 	}
 }

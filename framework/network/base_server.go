@@ -15,7 +15,7 @@ func newBaseServer(network, address string, handler IHandler, options ServerOpti
 		protoAddress: fmt.Sprintf("%s:%s", network, address),
 		handler:      handler,
 		connMgr:      NewConnManager(),
-		runGroup:     grs.NewGroup(),
+		runGroup:     grs.NewGroup(context.Background()),
 	}
 	server.ctx, server.cancel = context.WithCancel(context.Background())
 	return server

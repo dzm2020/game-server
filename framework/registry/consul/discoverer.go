@@ -86,7 +86,7 @@ func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, nil, err
 		}
-		glog.Error("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Error(err))
+		glog.Error("Consul拉取指定服务的健康实例条目", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
 		return nil, nil, err
 	}
 	glog.Debug("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Int("count", len(entries)))
@@ -204,7 +204,7 @@ func (d *Discoverer) Start(ctx context.Context) error {
 			glog.Info("服务发现协程终止")
 		}()
 		if err := d.SyncBlocking(runCtx); err != nil {
-			glog.Error("运行服务发现协程", zap.Error(err))
+			glog.Error("运行服务发现协程", glog.Component("registry.consul.discoverer"), glog.Err(err))
 		}
 	})
 	return nil
@@ -439,7 +439,7 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 				glog.Info("服务发现同步已停止", zap.String("service_name", serviceName))
 				return
 			}
-			glog.Error("服务实例发现", zap.String("service_name", serviceName), zap.Error(err))
+			glog.Error("服务实例发现", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
 			select {
 			case <-ctx.Done():
 				return

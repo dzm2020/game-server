@@ -4,29 +4,14 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
+	"game-server/framework/obs"
+	"game-server/framework/pkg/stopper"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/duke-git/lancet/v2/maputil"
 )
-
-type messageActorAdapter struct {
-	fn gen.ActorHandler
-}
-
-func (h messageActorAdapter) OnInit(gen.IContext) error { return nil }
-
-func (h messageActorAdapter) OnDestroy(gen.IContext) error { return nil }
-
-func (h messageActorAdapter) OnMessage(ctx gen.IContext) error {
-	if h.fn != nil {
-		h.fn(ctx)
-	}
-	return nil
-}
-
-func (h messageActorAdapter) OnError(gen.IContext, any) error { return nil }
 
 func NewSystem() *System {
 	return NewSystemWithNodeID("")
@@ -40,23 +25,23 @@ func NewSystemWithNodeID(nodeID string) *System {
 		processDict: maputil.NewConcurrentMap[uint64, *process](0),
 		nameDict:    maputil.NewConcurrentMap[string, *process](0),
 		nodeID:      nodeID,
+		waitGroup:   grs.NewGroup(context.Background()),
 	}
-	s.runCtx, s.cancel = context.WithCancel(context.Background())
+
 	return s
 }
 
+var _ gen.ISystem = (*System)(nil)
+
 type System struct {
+	stopper.Stopper
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
 	nextID      atomic.Uint64
-	closed      atomic.Bool
-	closeOnce   sync.Once
-	wg          sync.WaitGroup
-	lifecycleMu sync.Mutex
-	runCtx      context.Context
-	cancel      context.CancelFunc
 	nodeID      string
 	invoker     gen.IRemoteInvoker
+	lifecycleMu sync.Mutex
+	waitGroup   *grs.Group
 }
 
 func (s *System) SetRemoteInvoker(invoker gen.IRemoteInvoker) {
@@ -71,6 +56,13 @@ func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PI
 }
 
 func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID, error) {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+
+	if s.IsStop() {
+		return gen.NoSender, gen.ErrActorSystemClosed
+	}
+
 	if handler == nil {
 		return gen.NoSender, gen.ErrActorNilHandler
 	}
@@ -79,22 +71,14 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 		return gen.NoSender, err
 	}
 
-	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
-	if s.closed.Load() {
-		return gen.NoSender, gen.ErrActorSystemClosed
-	}
-
 	id := s.nextID.Add(1)
 	pid := gen.NewPID(id, opts.Name, s.nodeID)
-	runCtx, cancel := context.WithCancel(s.runCtx)
+
 	proc := &process{
 		system:   s,
 		pid:      pid,
 		mailbox:  make(chan gen.ActorEnvelope, opts.MailboxSize),
 		initArgs: append([]any(nil), opts.InitArgs...),
-		runCtx:   runCtx,
-		cancel:   cancel,
 		route:    opts.Route,
 	}
 
@@ -102,11 +86,10 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 		return gen.NoSender, err
 	}
 
-	s.wg.Add(1)
-	grs.SafeGo(func() {
-		defer s.wg.Done()
-		proc.run(handler)
+	s.waitGroup.Go(func(ctx context.Context) {
+		proc.run(ctx, handler)
 	})
+	obs.Inc("actor.spawn_total")
 	return pid, nil
 }
 
@@ -128,7 +111,7 @@ func (s *System) removeProcess(proc *process) {
 	s.nameDict.Delete(proc.getName())
 }
 
-func (s *System) GetProcess(target any) (*process, bool) {
+func (s *System) getProcess(target any) (*process, bool) {
 	switch v := target.(type) {
 	case *gen.PID:
 		if v.ActorID != 0 {
@@ -146,23 +129,28 @@ func (s *System) GetProcess(target any) (*process, bool) {
 }
 
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
-	if s.closed.Load() {
+	if s.IsStop() {
 		return gen.ErrActorSystemClosed
 	}
+	var err error
 	switch to := target.(type) {
 	case *gen.PID:
 		if to.NodeID == s.nodeID {
-			return s.localTell(from, to, msg)
+			err = s.localTell(from, to, msg)
 		} else {
-			return s.remoteTell(from, to, msg)
+			err = s.remoteTell(from, to, msg)
 		}
 	default:
-		return s.localTell(from, target, msg)
+		err = s.localTell(from, target, msg)
 	}
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
-	proc, ok := s.GetProcess(target)
+	proc, ok := s.getProcess(target)
 	if !ok {
 		return gen.ErrActorNotFound
 	}
@@ -180,17 +168,16 @@ func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error 
 }
 
 func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
-	if s.closed.Load() {
+	if s.IsStop() {
 		return nil, gen.ErrActorSystemClosed
 	}
 	if timeout <= 0 {
 		timeout = gen.DefaultActorAskTimeout
 	}
-	proc, ok := s.GetProcess(target)
+	proc, ok := s.getProcess(target)
 	if !ok {
 		return nil, gen.ErrActorNotFound
 	}
-
 	reply := newAskReply()
 	err := proc.send(gen.ActorEnvelope{
 		Payload: msg,
@@ -200,7 +187,11 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 	if err != nil {
 		return nil, err
 	}
-	return reply.wait(timeout)
+	resp, err := reply.wait(timeout)
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
@@ -211,10 +202,10 @@ func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
 }
 
 func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
-	if s.closed.Load() {
+	if s.IsStop() {
 		return gen.ErrActorSystemClosed
 	}
-	proc, ok := s.GetProcess(target)
+	proc, ok := s.getProcess(target)
 	if !ok {
 		return gen.ErrActorNotFound
 	}
@@ -222,7 +213,7 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 }
 
 func (s *System) StopProcess(target any) {
-	proc, ok := s.GetProcess(target)
+	proc, ok := s.getProcess(target)
 	if !ok {
 		return
 	}
@@ -230,22 +221,15 @@ func (s *System) StopProcess(target any) {
 }
 
 func (s *System) Stop(ctx context.Context) error {
+	if !s.Stopper.Stop() {
+		return nil
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	done := make(chan struct{})
-	go func() {
-		s.closeOnce.Do(func() {
-			s.closed.Store(true)
-			s.cancel()
-			s.wg.Wait()
-		})
-		close(done)
-	}()
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	s.lifecycleMu.Lock()
+	s.waitGroup.Cancel() // 再广播退出
+	s.lifecycleMu.Unlock()
+
+	return s.waitGroup.Wait(ctx)
 }

@@ -2,10 +2,9 @@ package network
 
 import (
 	"game-server/framework/gen"
+	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"net"
-
-	"go.uber.org/zap"
 )
 
 type UDPConnection struct {
@@ -76,7 +75,8 @@ func (c *UDPConnection) writeRcvChan(data []byte) {
 	select {
 	case c.rcvChan <- data:
 	default:
-		glog.Error("UDP读取chan已满", zap.Int64("connectionId", c.ID()))
+		obs.Inc("network.udp_read_chan_full_total")
+		glog.Error("UDP读取chan已满", glog.Component("network.udp"), glog.ConnID(c.ID()))
 	}
 }
 
@@ -89,6 +89,7 @@ func (c *UDPConnection) Close(err error) (w error) {
 	}
 	c.baseConn.Close(c, err)
 
-	glog.Info("UDP连接断开", zap.Int64("connectionId", c.ID()), zap.Error(err))
+	obs.Inc("network.udp_close_total")
+	glog.Info("UDP连接断开", glog.Component("network.udp"), glog.ConnID(c.ID()), glog.Err(err))
 	return
 }

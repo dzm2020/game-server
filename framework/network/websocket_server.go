@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"errors"
+	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"net/http"
 
@@ -28,6 +29,8 @@ type WebSocketServer struct {
 	useTLS     bool
 }
 
+const websocketServerComponent = "network.websocket.server"
+
 func NewWebSocketServer(base *baseServer, path string) *WebSocketServer {
 	wsUpgrader := upgrader
 	if base.serverOpts.WebOptions.CheckOrigin != nil {
@@ -49,10 +52,12 @@ func (s *WebSocketServer) Start() error {
 		Handler: mux,
 	}
 
-	s.runGroup.Go(func() {
-		glog.Info("WebSocket监听", zap.String("addr", s.Addr()), zap.String("path", s.path))
+	s.runGroup.Go(func(ctx context.Context) {
+		glog.Info("WebSocket监听", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
+
 		if err := s.listenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			glog.Error("WebSocket监听", zap.String("addr", s.Addr()), zap.String("path", s.path), zap.Error(err))
+
+			glog.Error("WebSocket监听", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path), glog.Err(err))
 			return
 		}
 	})
@@ -72,22 +77,23 @@ func (s *WebSocketServer) listenAndServe() error {
 func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		glog.Error("WebSocket升级失败", zap.String("addr", s.Addr()), zap.Error(err))
+		obs.Inc("network.websocket_upgrade_error_total")
+		glog.Error("WebSocket升级失败", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), glog.Err(err))
 		return
 	}
 
 	wsConn := newWebSocketConnection(s.connCommon(), conn)
 	s.connMgr.Add(wsConn)
 
-	s.runGroup.Go(func() {
+	s.runGroup.Go(func(ctx context.Context) {
 		wsConn.readLoop()
 	})
 
-	s.runGroup.Go(func() {
+	s.runGroup.Go(func(ctx context.Context) {
 		wsConn.writeLoop()
 	})
 
-	s.runGroup.Go(func() {
+	s.runGroup.Go(func(ctx context.Context) {
 		wsConn.heartbeat(wsConn)
 	})
 }
@@ -99,6 +105,6 @@ func (s *WebSocketServer) Shutdown(ctx context.Context) {
 	_ = s.httpServer.Shutdown(ctx)
 	s.baseServer.Shutdown(ctx)
 
-	glog.Info("WebSocket服务器关闭", zap.String("addr", s.Addr()), zap.String("path", s.path))
+	glog.Info("WebSocket服务器关闭", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
 	return
 }

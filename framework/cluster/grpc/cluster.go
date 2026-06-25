@@ -12,9 +12,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/duke-git/lancet/v2/convertor"
 	"github.com/duke-git/lancet/v2/maputil"
 	"go.uber.org/zap"
 )
+
+const clusterComponent = "cluster.grpc"
 
 type Options struct {
 	NodeID           string
@@ -38,28 +41,21 @@ type Cluster struct {
 
 	server *NodeServer
 
-	ctx       context.Context
-	ctxCancel context.CancelFunc
-
 	startOnce sync.Once
 	startErr  error
 	bgGroup   *grs.Group
 	closeOnce sync.Once
-	stopDone  chan struct{}
 }
 
 func New(options *Options) *Cluster {
 	options = normalization(options)
-	ctx, cancel := context.WithCancel(context.Background())
 	c := &Cluster{
-		peers:     maputil.NewConcurrentMap[string, *PeerConn](10),
-		ctx:       ctx,
-		ctxCancel: cancel,
-		options:   options,
-		bgGroup:   grs.NewGroup(),
-		stopDone:  make(chan struct{}),
+		peers:   maputil.NewConcurrentMap[string, *PeerConn](10),
+		options: options,
+		bgGroup: grs.NewGroup(context.Background()),
 	}
-	c.server = NewNodeServer(c.options.ListenAddr, c)
+
+	c.server = NewNodeServer(c.bgGroup, c.options.ListenAddr, c)
 
 	return c
 }
@@ -76,6 +72,7 @@ func (c *Cluster) SetDiscovery(discovery gen.IDiscovery) {
 func (c *Cluster) Start(ctx context.Context) error {
 	_ = ctx
 	c.startOnce.Do(func() {
+		c.bgGroup = grs.NewGroup(ctx)
 		if err := validate(c.options); err != nil {
 			c.startErr = err
 			return
@@ -86,25 +83,25 @@ func (c *Cluster) Start(ctx context.Context) error {
 }
 
 func (c *Cluster) start() error {
-	glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
+	glog.Info("grpc集群启动中", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()))
 
 	if err := c.server.Serve(); err != nil {
-		glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
+		glog.Error("grpc集群启动失败", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), glog.Err(err))
 		return err
 	}
 
 	c.tryConnectPeers()
-	c.bgGroup.Go(func() {
-		glog.Info("grpc监控集群变化协程启动", zap.String("node_id", c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
-		c.connectPeers()
-		glog.Info("grpc监控集群变化协程关闭", zap.String("node_id", c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
+	c.bgGroup.Go(func(ctx context.Context) {
+		glog.Info("grpc监控集群变化协程启动", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
+		c.connectPeers(ctx)
+		glog.Info("grpc监控集群变化协程关闭", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), zap.Strings("peer_names", c.options.PeerNames))
 	})
 
 	if err := c.waitPeersReady(10 * time.Second); err != nil {
-		glog.Error("grpc集群启动完成", zap.String("node_id", c.GetSelfID()), zap.Error(err))
+		glog.Warn("grpc集群启动完成(部分peer未就绪)", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), glog.Err(err))
 	}
 	_, total := c.peerReadyState()
-	glog.Info("grpc集群启动完成", zap.String("node_id", c.GetSelfID()), zap.Int("peer_count", total))
+	glog.Info("grpc集群启动完成", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), zap.Int("peer_count", total))
 	return nil
 }
 
@@ -121,10 +118,10 @@ func (c *Cluster) waitPeersReady(timeout time.Duration) error {
 		}
 
 		select {
-		case <-c.ctx.Done():
+		case <-c.bgGroup.Context().Done():
 			return gen.ErrClusterClosed
 		case <-deadline.C:
-			return fmt.Errorf("%w: connected=%d total=%d", gen.ErrClusterWaitPeerReadyTimeout, connected, total)
+			return gen.ErrClusterWaitPeerReadyTimeout
 		case <-ticker.C:
 		}
 	}
@@ -142,6 +139,10 @@ func (c *Cluster) peerReadyState() (connected int, total int) {
 }
 
 func (c *Cluster) tryConnectPeers() {
+	if c.discovery == nil {
+		glog.Warn("grpc集群连接对端失败,未配置注册中心", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()))
+		return
+	}
 	list := c.discovery.DiscoverAll()
 	for name, instances := range list {
 		if !slices.Contains(c.options.PeerNames, name) {
@@ -153,9 +154,9 @@ func (c *Cluster) tryConnectPeers() {
 	}
 }
 
-func (c *Cluster) connectPeers() {
+func (c *Cluster) connectPeers(ctx context.Context) {
 	if c.discovery == nil {
-		glog.Warn("grpc集群连接对端失败,未配置注册中心", zap.String("node_id", c.GetSelfID()))
+		glog.Warn("grpc集群连接对端失败,未配置注册中心", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()))
 		return
 	}
 	ticker := time.NewTicker(time.Second * 3)
@@ -164,7 +165,7 @@ func (c *Cluster) connectPeers() {
 		select {
 		case <-ticker.C:
 			c.tryConnectPeers()
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -179,7 +180,7 @@ func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 	if ok {
 		return
 	}
-	peer := NewPeer(&PeerConfig{
+	peer := NewPeer(c.bgGroup, &PeerConfig{
 		nodeID:     nodeID,
 		address:    ins.GetRpcAddress(),
 		sendCh:     make(chan *gen.ClusterMessage, c.options.PeerSendChanSize),
@@ -188,7 +189,8 @@ func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 	})
 	c.peers.Set(nodeID, peer)
 	glog.Info("grpc集群新增连接",
-		zap.String("node_id", nodeID),
+		glog.Component(clusterComponent),
+		glog.NodeID(nodeID),
 		zap.String("name", ins.GetName()),
 		zap.String("ext_address", ins.GetExtAddress()),
 		zap.String("rpc_address", ins.GetRpcAddress()),
@@ -202,43 +204,48 @@ func (c *Cluster) onPeerClosed(nodeID string, peer *PeerConn) {
 	}
 	if current.nodeID != peer.nodeID || current.address != peer.address {
 		glog.Warn("grpc集群删除节点",
-			zap.String("node_id", nodeID),
+			glog.Component(clusterComponent),
+			glog.NodeID(nodeID),
 			zap.String("current_address", current.address),
 			zap.String("closing_address", peer.address),
 		)
 		return
 	}
 	c.peers.Delete(nodeID)
-	glog.Info("grpc集群删除节点", zap.String("node_id", nodeID))
+	glog.Info("grpc集群删除节点", glog.Component(clusterComponent), glog.NodeID(nodeID))
 }
 
 // SendToNode 发送消息到指定节点
 func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
+	if c.discovery == nil {
+		glog.Warn("grpc集群发送消息到指定节点", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()))
+		return gen.ErrRegistryNil
+	}
 	nodeId := to.GetNodeID()
 	peer, exists := c.peers.Get(nodeId)
 	if !exists {
 		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotFound, nodeId)
-		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		glog.Error("grpc集群发送消息到指定节点", glog.Component(clusterComponent), zap.String("target_node_id", nodeId), glog.Err(err))
 		return err
 	}
 	_, ok := c.discovery.GetInstance(nodeId)
 	if !ok {
 		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotInServiceList, nodeId)
-		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		glog.Error("grpc集群发送消息到指定节点", glog.Component(clusterComponent), zap.String("target_node_id", nodeId), glog.Err(err))
 		return err
 	}
 	if !peer.IsConnected() {
 		err := fmt.Errorf("%w: %s", gen.ErrClusterNodeNotConnected, nodeId)
-		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId))
+		glog.Error("grpc集群发送消息到指定节点", glog.Component(clusterComponent), zap.String("target_node_id", nodeId), glog.Err(err))
 		return err
 	}
 	m, err := NewClusterMessage(from, to, msg)
 	if err != nil {
-		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		glog.Error("grpc集群发送消息到指定节点", glog.Component(clusterComponent), zap.String("target_node_id", nodeId), glog.Err(err))
 		return err
 	}
 	if err := peer.send(m); err != nil {
-		glog.Error("grpc集群发送消息到指定节点", zap.String("target_node_id", nodeId), zap.Error(err))
+		glog.Error("grpc集群发送消息到指定节点", glog.Component(clusterComponent), zap.String("target_node_id", nodeId), glog.Err(err))
 		return err
 	}
 	glog.Debug("grpc集群发送消息到指定节点", zap.Any("from", from), zap.Any("to", to), zap.Any("msg", msg))
@@ -249,14 +256,15 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) {
 	var success int
 	c.peers.Range(func(nodeID string, peer *PeerConn) bool {
+		to = convertor.DeepClone(to)
 		to.NodeID = nodeID
 		m, err := NewClusterMessage(gen.NoSender, to, msg)
 		if err != nil {
-			glog.Warn("广播到节点失败", zap.String("target_node_id", nodeID), zap.Error(err))
+			glog.Warn("广播到节点失败", glog.Component(clusterComponent), zap.String("target_node_id", nodeID), glog.Err(err))
 			return true
 		}
 		if err := peer.send(m); err != nil {
-			glog.Warn("广播到节点失败", zap.String("target_node_id", nodeID), zap.Error(err))
+			glog.Warn("广播到节点失败", glog.Component(clusterComponent), zap.String("target_node_id", nodeID), glog.Err(err))
 			return true
 		}
 		success++
@@ -271,24 +279,22 @@ func (c *Cluster) GetSelfID() string {
 }
 
 func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
+	if c.invoker == nil {
+		return gen.ErrClusterInvokerIsNil
+	}
 	m, _, err := gen.Decode(msg.Data)
 	if err != nil {
-		glog.Error("grpc集群接受处理消息", zap.Error(err))
+		glog.Error("grpc集群接受处理消息", glog.Component(clusterComponent), glog.Err(err))
 		return err
 	}
 	if m == nil {
-		err := gen.ErrClusterDecodeFailed
-		glog.Error("grpc集群接受处理消息", zap.ByteString("data", msg.Data), zap.Error(err))
+		err = gen.ErrClusterDecodeFailed
+		glog.Error("grpc集群接受处理消息", glog.Component(clusterComponent), zap.ByteString("data", msg.Data), glog.Err(err))
 		return err
 	}
 	to := msg.TargetPid
-	if err := c.invoker.Handler(msg.SourcePid, msg.TargetPid, m); err != nil {
-		glog.Error("grpc集群接受处理消息",
-			zap.String("target_node_id", to.NodeID),
-			zap.String("target_actor_name", to.ActorName),
-			zap.Uint64("target_actor_id", to.ActorID),
-			zap.Error(err),
-		)
+	if err = c.invoker.Handler(msg.SourcePid, to, m); err != nil {
+		glog.Error("grpc集群接受处理消息", glog.Component(clusterComponent), glog.PID(to), glog.Err(err))
 	}
 	glog.Debug("grpc集群接受处理消息", zap.Any("msg", msg))
 	return nil
@@ -299,49 +305,20 @@ func (c *Cluster) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var err error
 	c.closeOnce.Do(func() {
-		grs.SafeGo(func() {
-			defer close(c.stopDone)
-			c.shutdown()
-		})
-	})
-	select {
-	case <-c.stopDone:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *Cluster) shutdown() {
-	if c.ctxCancel != nil {
-		c.ctxCancel()
-	}
-
-	var peers []*PeerConn
-	c.peers.Range(func(nodeID string, peer *PeerConn) bool {
-		peers = append(peers, peer)
-		return true
-	})
-
-	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	for _, peer := range peers {
-		if peer == nil {
-			continue
+		c.bgGroup.Cancel()
+		if err = c.server.shutdown(); err != nil {
+			glog.Warn("集群server停止失败", zap.Error(err))
+			return
 		}
-		if err := peer.Shutdown(waitCtx); err != nil {
-			glog.Warn("等待远端节点连接关闭超时", zap.String("node_id", peer.nodeID), zap.Error(err))
+		if err = c.bgGroup.Wait(ctx); err != nil {
+			glog.Warn("等待集群后台协程退出超时", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()), glog.Err(err))
+			return
 		}
-	}
-	if err := c.server.shutdown(waitCtx); err != nil {
-		glog.Warn("等待grpc服务端退出超时", zap.String("node_id", c.GetSelfID()), zap.Error(err))
-	}
-	if err := c.bgGroup.Wait(waitCtx); err != nil {
-		glog.Warn("等待集群后台协程退出超时", zap.String("node_id", c.GetSelfID()), zap.Error(err))
-	}
-	glog.Info("集群已关闭", zap.String("node_id", c.GetSelfID()))
+		glog.Info("集群已关闭", glog.Component(clusterComponent), glog.NodeID(c.GetSelfID()))
+	})
+	return err
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {

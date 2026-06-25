@@ -5,6 +5,7 @@ import (
 	"game-server/framework/pkg/glog"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -32,26 +33,40 @@ func Try(fn func(), recoverFunc func(e error)) {
 	}
 }
 
-func NewGroup() *Group {
-	return &Group{}
-}
-
-type Group struct {
-	runWG sync.WaitGroup
-}
-
-func (g *Group) Go(fn func()) {
-	g.runWG.Add(1)
-	go func() {
-		defer g.runWG.Done()
-		Try(fn, nil)
-	}()
-}
-
-func (g *Group) Wait(ctx context.Context) error {
+func NewGroup(ctx context.Context) *Group {
+	g := &Group{}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	g.ctx, g.cancel = context.WithCancel(ctx)
+	return g
+}
+
+type Group struct {
+	runWG  sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (g *Group) Context() context.Context {
+	return g.ctx
+}
+func (g *Group) Go(fn func(ctx context.Context)) {
+	g.runWG.Add(1)
+	go func() {
+		defer g.runWG.Done()
+		Try(func() {
+			fn(g.ctx)
+		}, nil)
+	}()
+}
+
+func (g *Group) Cancel() {
+	if g.cancel != nil {
+		g.cancel()
+	}
+}
+func (g *Group) Wait(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		g.runWG.Wait()
@@ -62,5 +77,19 @@ func (g *Group) Wait(ctx context.Context) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
+	}
+}
+
+func (g *Group) WaitTimeout(timeout time.Duration) error {
+	done := make(chan struct{})
+	go func() {
+		g.runWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(timeout):
+		return context.DeadlineExceeded
 	}
 }

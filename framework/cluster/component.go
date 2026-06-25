@@ -17,11 +17,11 @@ func (l *LocalInvoker) Handler(from *gen.PID, target *gen.PID, msg *gen.Message)
 	system := l.node.GetSystem()
 	if system == nil {
 		err := gen.ErrClusterSystemNil
-		glog.Error("集群消息分发失败", zap.Error(err))
+		glog.Error("集群消息分发失败", glog.Component("cluster.component"), glog.Err(err))
 		return err
 	}
 	if err := system.Tell(from, target, msg); err != nil {
-		glog.Error("集群消息分发失败", zap.Error(err))
+		glog.Error("集群消息分发失败", glog.Component("cluster.component"), glog.Err(err))
 		return err
 	}
 	glog.Debug("集群消息分发", zap.Any("msg", msg))
@@ -64,7 +64,7 @@ func (c *Component) Start(ctx context.Context) error {
 		return gen.ErrClusterNil
 	}
 	if err := c.ICluster.Start(ctx); err != nil {
-		glog.Error("集群组件运行", zap.Error(err))
+		glog.Error("集群组件运行", glog.Component("cluster.component"), glog.Err(err))
 		return err
 	}
 	glog.Info("集群组件运行成功")

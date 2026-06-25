@@ -17,12 +17,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const serverComponent = "cluster.grpc.server"
+
 // NewNodeServer 创建服务端
-func NewNodeServer(address string, dispatcher Dispatcher) *NodeServer {
+func NewNodeServer(serveGroup *grs.Group, address string, dispatcher Dispatcher) *NodeServer {
 	return &NodeServer{
 		address:    address,
 		dispatcher: dispatcher,
-		serveGroup: grs.NewGroup(),
+		serveGroup: serveGroup,
 	}
 }
 
@@ -45,7 +47,8 @@ func (s *NodeServer) listen() error {
 	//  启动服务端
 	lis, err := net.Listen("tcp", s.address)
 	if err != nil {
-		glog.Error("grpc集群服务监听", zap.String("listen_addr", s.address))
+
+		glog.Error("grpc集群服务监听", glog.Component(serverComponent), zap.String("listen_addr", s.address), glog.Err(err))
 		return err
 	}
 	server := grpc.NewServer(
@@ -59,7 +62,8 @@ func (s *NodeServer) listen() error {
 	RegisterNodeServiceServer(server, s)
 	s.lis = lis
 	s.server = server
-	glog.Info("grpc集群服务监听", zap.String("listen_addr", s.address))
+
+	glog.Info("grpc集群服务监听", glog.Component(serverComponent), zap.String("listen_addr", s.address))
 	return nil
 }
 
@@ -72,13 +76,13 @@ func (s *NodeServer) Serve() error {
 	if err := s.listen(); err != nil {
 		return err
 	}
-	startCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	startCtx, cancel := context.WithTimeout(s.serveGroup.Context(), 3*time.Second)
 	defer cancel()
 	serveErrCh := make(chan error, 1)
-	s.serveGroup.Go(func() {
+	s.serveGroup.Go(func(context.Context) {
 		err := s.server.Serve(s.lis)
 		if isNodeServerStopErr(err) {
-			glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
+			glog.Info("grpc集群服务端协程停止", glog.Component(serverComponent), zap.String("listen_addr", s.address))
 			select {
 			case serveErrCh <- nil:
 			default:
@@ -89,7 +93,7 @@ func (s *NodeServer) Serve() error {
 		case serveErrCh <- err:
 		default:
 		}
-		glog.Info("grpc集群服务端协程停止", zap.String("listen_addr", s.address))
+		glog.Info("grpc集群服务端协程停止", glog.Component(serverComponent), zap.String("listen_addr", s.address), glog.Err(err))
 	})
 
 	select {
@@ -102,28 +106,27 @@ func (s *NodeServer) Serve() error {
 
 // Stream 实现双向流
 func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
-	glog.Info("grpc集群服务端收协程启动")
+	glog.Info("grpc集群服务端收协程启动", glog.Component(serverComponent))
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
 			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				glog.Info("grpc集群服务端接收终止", zap.Error(err))
+				glog.Info("grpc集群服务端接收终止", glog.Component(serverComponent), glog.Err(err))
 				return nil
 			}
-			glog.Error("grpc集群服务端接收", zap.Error(err))
+
+			glog.Error("grpc集群服务端接收", glog.Component(serverComponent), glog.Err(err))
 			return err
 		}
+
 		if err = s.dispatcher.Dispatch(msg); err != nil {
-			glog.Error("grpc集群服务端接收", zap.Error(err))
+			glog.Error("grpc集群服务端接收", glog.Component(serverComponent), glog.Err(err))
 		}
 	}
 }
 
-func (s *NodeServer) shutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	glog.Info("grpc集群服务端关闭")
+func (s *NodeServer) shutdown() error {
+	glog.Info("grpc集群服务端关闭", glog.Component(serverComponent))
 	if s.lis != nil {
 		_ = s.lis.Close()
 	}
@@ -139,7 +142,7 @@ func (s *NodeServer) shutdown(ctx context.Context) error {
 			s.server.Stop()
 		}
 	}
-	return s.serveGroup.Wait(ctx)
+	return nil
 }
 
 func isNodeServerStopErr(err error) bool {

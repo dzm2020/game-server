@@ -65,6 +65,7 @@ var (
 	ErrNodeNil                     = NewError("node is nil", 64)
 	ErrNodeComponentNotRegistered  = NewError("node component not registered", 65)
 	ErrNodeComponentTypeMismatched = NewError("node component type mismatch", 66)
+	ErrClusterInvokerIsNil         = NewError("cluster local invoker is nil", 67)
 
 	// network detail
 	ErrNetworkChannelFull         = NewError("network channel full", 80)

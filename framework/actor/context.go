@@ -134,6 +134,7 @@ func (c *actorContext) Respond(v []byte) error {
 	}
 	return c.current.Respond(v)
 }
+
 func (c *actorContext) Actor() gen.IActor {
 	return c.actor
 }
