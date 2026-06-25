@@ -63,7 +63,7 @@ func (c *Component) Start(ctx context.Context) error {
 	if c.ICluster == nil {
 		return gen.ErrClusterNil
 	}
-	if err := c.ICluster.Run(); err != nil {
+	if err := c.ICluster.Start(ctx); err != nil {
 		glog.Error("集群组件运行", zap.Error(err))
 		return err
 	}

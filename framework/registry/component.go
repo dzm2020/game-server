@@ -71,7 +71,7 @@ func (c *Component) Start(ctx context.Context) error {
 	c.runMu.Lock()
 	c.runCancel = cancel
 	c.runMu.Unlock()
-	if err := c.IRegistry.Run(runCtx); err != nil {
+	if err := c.IRegistry.Start(runCtx); err != nil {
 		cancel()
 		c.runMu.Lock()
 		c.runCancel = nil

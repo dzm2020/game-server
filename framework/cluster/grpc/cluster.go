@@ -41,6 +41,8 @@ type Cluster struct {
 	ctx       context.Context
 	ctxCancel context.CancelFunc
 
+	startOnce sync.Once
+	startErr  error
 	closeOnce sync.Once
 }
 
@@ -64,9 +66,18 @@ func (c *Cluster) SetDiscovery(discovery gen.IDiscovery) {
 	c.discovery = discovery
 }
 
-// Run 启动服务端和对端连接协程。
+// Start 启动服务端和对端连接协程。
 // 该方法会等待服务监听就绪以及已有 peer 连通检查，然后快速返回。
-func (c *Cluster) Run() error {
+func (c *Cluster) Start(ctx context.Context) error {
+	_ = ctx
+	c.startOnce.Do(func() {
+		c.startErr = c.start()
+	})
+	return c.startErr
+}
+
+// Run 兼容旧命名，等价于 Start。
+func (c *Cluster) start() error {
 	glog.Info("grpc集群启动中", zap.String("node_id", c.GetSelfID()))
 
 	if err := c.server.Serve(); err != nil {

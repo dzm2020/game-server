@@ -162,13 +162,13 @@ func (d *Discoverer) Unwatch(serviceName, watchID string) {
 	glog.Info("移除服务监控", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
 }
 
-// Run
+// Start
 //
 //	@Description: 运行服务发现协程
 //	@receiver d
 //	@param ctx
 //	@return error
-func (d *Discoverer) Run(ctx context.Context) error {
+func (d *Discoverer) Start(ctx context.Context) error {
 	d.watchMu.Lock()
 	if d.watching {
 		d.watchMu.Unlock()

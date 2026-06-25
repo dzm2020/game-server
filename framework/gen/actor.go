@@ -18,6 +18,12 @@ type ActorEnvelope struct {
 }
 
 // ISystem 抽象 System 的对外公共能力，便于依赖注入与单元测试替身。
+//
+// 生命周期命名冻结约定：
+// - Start：启动长期运行组件；要求幂等，且不得长期阻塞。
+// - Stop：优雅停止长期运行组件；要求幂等，并阻塞等待停止完成或 ctx.Done。
+// - Shutdown：仅用于“服务端入口”级别优雅退出，语义等同 Stop。
+// - Close：仅用于“单个资源句柄”关闭，调用后资源不可继续使用。
 type ISystem interface {
 	Spawn(handler ActorHandler, opts SpawnOptions) (*PID, error)
 	SpawnActor(handler IActor, opts SpawnOptions) (*PID, error)
@@ -27,6 +33,10 @@ type ISystem interface {
 	DoTask(from *PID, target any, task ActorTask) error
 	SendEnvelope(target any, env ActorEnvelope) error
 	StopProcess(target any)
+	// Stop 优雅停止 Actor 系统。
+	// 幂等：可重复调用，仅第一次执行真实停止流程；后续调用返回与首次一致的结果。
+	// 阻塞：阻塞直到所有 Actor 退出完成，或 ctx.Done。
+	// 返回：完全停止返回 nil；若被 ctx 取消/超时或停止过程失败，返回 error。
 	Stop(ctx context.Context) error
 }
 

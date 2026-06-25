@@ -44,14 +44,26 @@ const (
 )
 
 // IRegistry 定义 Registry 对外能力，便于依赖倒置与单测替身注入。
+//
+// 生命周期命名冻结约定：
+// - Start：启动长期运行组件；要求幂等，且不得长期阻塞。
+// - Stop：优雅停止长期运行组件；要求幂等，并阻塞等待停止完成或 ctx.Done。
+// - Shutdown：仅用于“服务端入口”级别优雅退出，语义等同 Stop。
+// - Close：仅用于“单个资源句柄”关闭，调用后资源不可继续使用。
 type IRegistry interface {
 	IDiscovery
 	IRegistrar
 
-	// Run 启动服务发现后台任务。
-	// 约定：应快速返回（非长期阻塞）；重复调用应尽量幂等。
-	Run(ctx context.Context) error
+	// Start 启动服务注册/发现后台任务。
+	// 幂等：重复调用不得重复启动，已启动时应返回 nil。
+	// 阻塞：可短暂阻塞到后台任务初始化完成，不得长期阻塞。
+	// 返回：后台任务进入运行态返回 nil；初始化失败或已不可启动时返回 error。
+	Start(ctx context.Context) error
 
+	// Stop 优雅停止服务注册/发现后台任务。
+	// 幂等：可重复调用，仅第一次执行真实停止流程；后续调用返回与首次一致的结果。
+	// 阻塞：阻塞直到后台任务退出完成，或 ctx.Done。
+	// 返回：完全停止返回 nil；若被 ctx 取消/超时或停止过程失败，返回 error。
 	Stop(ctx context.Context) error
 }
 

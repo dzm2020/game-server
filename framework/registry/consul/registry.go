@@ -57,7 +57,7 @@ func (r *Registry) SetHealthState(serviceID string, state gen.ServiceHealthState
 	return r.Registrar.SetHealthState(serviceID, state)
 }
 
-func (r *Registry) Run(ctx context.Context) error {
+func (r *Registry) Start(ctx context.Context) error {
 	r.runMu.Lock()
 	if r.runCancel != nil {
 		r.runMu.Unlock()
@@ -67,7 +67,7 @@ func (r *Registry) Run(ctx context.Context) error {
 	r.runCancel = cancel
 	r.runMu.Unlock()
 
-	if err := r.Discoverer.Run(runCtx); err != nil {
+	if err := r.Discoverer.Start(runCtx); err != nil {
 		cancel()
 		r.runMu.Lock()
 		r.runCancel = nil
