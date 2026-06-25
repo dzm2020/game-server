@@ -2,7 +2,6 @@ package component
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -13,12 +12,12 @@ import (
 )
 
 var (
-	ErrComponentCannotBeNil                = errors.New("组件不能为空")
-	ErrCannotRegisterComponentAfterStarted = errors.New("组件启动后无法注册组件")
-	ErrComponentAlreadyRegistered          = errors.New("组件已注册")
-	ErrManagerAlreadyStarted               = errors.New("管理器已启动")
-	ErrManagerStoppedCannotRestart         = errors.New("管理器已停止，无法重启")
-	ErrFailedToStartComponent              = errors.New("组件启动失败")
+	ErrComponentCannotBeNil                = fmt.Errorf("组件不能为空")
+	ErrCannotRegisterComponentAfterStarted = fmt.Errorf("组件启动后无法注册组件")
+	ErrComponentAlreadyRegistered          = fmt.Errorf("组件已注册")
+	ErrManagerAlreadyStarted               = fmt.Errorf("管理器已启动")
+	ErrManagerStoppedCannotRestart         = fmt.Errorf("管理器已停止，无法重启")
+	ErrFailedToStartComponent              = fmt.Errorf("组件启动失败")
 )
 
 type IManager interface {

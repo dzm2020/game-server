@@ -2,11 +2,15 @@ package netutil
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"syscall"
 	"time"
+)
+
+var (
+	ErrUnsupportedConnType = fmt.Errorf("unsupported conn type")
+	ErrTCPConnRequired     = fmt.Errorf("conn is not *net.TCPConn")
 )
 
 // ==================== 通用工具函数：获取 RawConn ====================
@@ -28,7 +32,7 @@ func getRawConnFromConn(conn net.Conn) (syscall.RawConn, error) {
 			return nil, fmt.Errorf("get UDP conn raw conn failed: %w", err)
 		}
 	default:
-		return nil, errors.New("unsupported conn type")
+		return nil, ErrUnsupportedConnType
 	}
 	return rawConn, nil
 }
@@ -134,7 +138,7 @@ func SetReusePort(conn net.Conn) error {
 func SetTCPNoDelay(conn net.Conn, enable bool) error {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return errors.New("conn is not *net.TCPConn (TCP_NODELAY only for TCP)")
+		return ErrTCPConnRequired
 	}
 	return tcpConn.SetNoDelay(enable)
 }
@@ -145,7 +149,7 @@ func SetTCPNoDelay(conn net.Conn, enable bool) error {
 func SetTCPKeepAlive(conn net.Conn, enable bool, period time.Duration) error {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return errors.New("conn is not *net.TCPConn (keepalive only for TCP)")
+		return ErrTCPConnRequired
 	}
 
 	// 启用/禁用 keepalive
@@ -216,7 +220,7 @@ func SetSndBuffer(conn net.Conn, sndBuf int) error {
 func SetTCPLinger(conn net.Conn, enable bool, lingerSec int) error {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
-		return errors.New("conn is not *net.TCPConn (linger only for TCP)")
+		return ErrTCPConnRequired
 	}
 
 	rawConn, err := tcpConn.SyscallConn()

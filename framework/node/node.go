@@ -2,7 +2,7 @@ package node
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"game-server/framework/actor"
 	"game-server/framework/cluster"
 	"game-server/framework/gen"
@@ -62,7 +62,7 @@ func (n *Node) init(options gen.NodeOptions) {
 	logOptions := []zap.Option{
 		zap.WithPanicHook(panicHook{
 			fn: func(entry *zapcore.CheckedEntry, fields []zapcore.Field) {
-				n.options.Behavior.OnPanic(n, errors.New(entry.Message))
+				n.options.Behavior.OnPanic(n, fmt.Errorf("%s", entry.Message))
 			},
 		}),
 		zap.Fields(

@@ -1,7 +1,7 @@
 package buffer
 
 import (
-	"errors"
+	"fmt"
 	"io"
 )
 
@@ -9,6 +9,11 @@ const (
 	defaultInitialCap = 4096             // 默认初始容量 4KB
 	capacityGrowthMul = 2                // 扩容倍数
 	maxBufferCap      = 1024 * 1024 * 10 // 单 buffer 最大容量 10MB
+)
+
+var (
+	ErrInsufficientData       = fmt.Errorf("insufficient data")
+	ErrInsufficientDataToSkip = fmt.Errorf("insufficient data to skip")
 )
 
 type IBuffer interface {
@@ -202,7 +207,7 @@ func (b *Buffer) Peek(n int) ([]byte, error) {
 		return []byte{}, nil
 	}
 	if b.Len() < n {
-		return nil, errors.New("insufficient data")
+		return nil, ErrInsufficientData
 	}
 	return b.buf[b.r : b.r+n], nil
 }
@@ -213,7 +218,7 @@ func (b *Buffer) Skip(n int) error {
 		return nil
 	}
 	if b.Len() < n {
-		return errors.New("insufficient data to skip")
+		return ErrInsufficientDataToSkip
 	}
 	b.r += n
 	return nil

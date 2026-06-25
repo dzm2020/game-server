@@ -73,6 +73,20 @@ var (
 	ErrNetworkInvalidProtoAddr    = NewError("network invalid proto address", 83)
 	ErrNetworkUnsupportedProtocol = NewError("network protocol is not supported", 84)
 	ErrMessageDataOverSize        = NewError("message data over size ", 85)
+
+	// gateway
+	ErrGatewaySystemComponentAbsent  = NewError("gateway depends on system component", 100)
+	ErrGatewayComponentNotInited     = NewError("gateway component is not initialized", 101)
+	ErrGatewayClientAgentNotFound    = NewError("gateway client agent not found", 102)
+	ErrGatewayInboundPayloadTooLarge = NewError("gateway inbound payload too large", 103)
+	ErrGatewayAgentSpawnerNil        = NewError("gateway agent spawner is nil", 104)
+	ErrGatewayCreateNetworkServer    = NewError("gateway create network server failed", 105)
+	ErrGatewayBuildClientAgent       = NewError("gateway build client agent failed", 106)
+	ErrGatewaySpawnClientAgent       = NewError("gateway spawn client agent failed", 107)
+	ErrGatewayNilClientAgent         = NewError("gateway client agent is nil", 108)
+	ErrGatewayInvalidPushParams      = NewError("gateway invalid push params", 109)
+	ErrGatewayConnectionUnavailable  = NewError("gateway connection is unavailable", 110)
+	ErrGatewayInvalidMessageType     = NewError("gateway invalid message type", 111)
 )
 
 func WrapErrNetworkUnsupportedProtocol(proto string) error {
