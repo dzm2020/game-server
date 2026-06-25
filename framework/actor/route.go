@@ -26,23 +26,21 @@ func NewRoute() *Route {
 }
 
 func (r *Route) Register(cmd, act uint8, handler gen.ActorRouteHandler, request proto.Message) {
-	r.mu.Lock()
 	routeID := gen.CmdAct(cmd, act)
 	var requestType reflect.Type
 	if request != nil {
 		requestType = reflect.TypeOf(request)
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.handlers[routeID] = &entry{
 		handler: handler,
 		t:       requestType,
 	}
-	r.mu.Unlock()
 }
 
 func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
-	r.mu.RLock()
-	e := r.handlers[gen.CmdAct(msg.Cmd, msg.Act)]
-	r.mu.RUnlock()
+	e := r.get(msg.Cmd, msg.Act)
 	if e == nil {
 		return fmt.Errorf("%w cmd:%d act:%d", gen.ErrActorRouteNotFound, msg.Cmd, msg.Act)
 	}
@@ -61,8 +59,11 @@ func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
 }
 
 func (r *Route) Exist(cmd, act uint8) bool {
+	return r.get(cmd, act) != nil
+}
+
+func (r *Route) get(cmd, act uint8) *entry {
 	r.mu.RLock()
-	_, ok := r.handlers[gen.CmdAct(cmd, act)]
-	r.mu.RUnlock()
-	return ok
+	defer r.mu.RUnlock()
+	return r.handlers[gen.CmdAct(cmd, act)]
 }

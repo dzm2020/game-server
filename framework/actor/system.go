@@ -4,7 +4,8 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
-	"game-server/framework/obs"
+	"game-server/framework/pkg/component"
+
 	"game-server/framework/pkg/stopper"
 	"sync"
 	"sync/atomic"
@@ -13,39 +14,34 @@ import (
 	"github.com/duke-git/lancet/v2/maputil"
 )
 
-func NewSystem() *System {
-	return NewSystemWithNodeID("")
-}
-
-func NewSystemWithNodeID(nodeID string) *System {
-	if nodeID == "" {
-		nodeID = "local"
-	}
-	s := &System{
+func NewSystem(node gen.INode) *System {
+	return &System{
 		processDict: maputil.NewConcurrentMap[uint64, *process](0),
 		nameDict:    maputil.NewConcurrentMap[string, *process](0),
-		nodeID:      nodeID,
+		node:        node,
 		waitGroup:   grs.NewGroup(context.Background()),
 	}
-
-	return s
 }
 
 var _ gen.ISystem = (*System)(nil)
+var _ component.IComponent = (*System)(nil)
 
 type System struct {
 	stopper.Stopper
+	node        gen.INode
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
 	nextID      atomic.Uint64
-	nodeID      string
-	invoker     gen.IRemoteInvoker
 	lifecycleMu sync.Mutex
 	waitGroup   *grs.Group
 }
 
-func (s *System) SetRemoteInvoker(invoker gen.IRemoteInvoker) {
-	s.invoker = invoker
+func (s *System) Init(ctx context.Context) error {
+	return nil
+}
+
+func (s *System) Start(ctx context.Context) error {
+	return nil
 }
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
@@ -72,7 +68,7 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	}
 
 	id := s.nextID.Add(1)
-	pid := gen.NewPID(id, opts.Name, s.nodeID)
+	pid := gen.NewPID(id, opts.Name, s.node.GetId())
 
 	proc := &process{
 		system:   s,
@@ -89,7 +85,6 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	s.waitGroup.Go(func(ctx context.Context) {
 		proc.run(ctx, handler)
 	})
-	obs.Inc("actor.spawn_total")
 	return pid, nil
 }
 
@@ -129,57 +124,40 @@ func (s *System) getProcess(target any) (*process, bool) {
 }
 
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
-	if s.IsStop() {
-		return gen.ErrActorSystemClosed
-	}
-	var err error
-	switch to := target.(type) {
-	case *gen.PID:
-		if to.NodeID == s.nodeID {
-			err = s.localTell(from, to, msg)
-		} else {
-			err = s.remoteTell(from, to, msg)
+	if to, ok := target.(*gen.PID); ok && to.NodeID != s.node.GetId() {
+		if s.IsStop() {
+			return gen.ErrActorSystemClosed
 		}
-	default:
-		err = s.localTell(from, target, msg)
+		return s.remoteTell(from, to, msg)
 	}
-	if err != nil {
-		return err
-	}
-	return nil
+	return s.localTell(from, target, msg)
 }
 
 func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
-	proc, ok := s.getProcess(target)
-	if !ok {
-		return gen.ErrActorNotFound
-	}
-	return proc.send(gen.ActorEnvelope{
+	return s.SendEnvelope(target, gen.ActorEnvelope{
 		Payload: msg,
 		Sender:  from,
 	})
 }
 
 func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error {
-	if s.invoker == nil {
-		return gen.ErrActorRemoteInvokerNotSet
+	cluster := s.node.GetCluster()
+	if cluster == nil {
+		return gen.ErrClusterNil
 	}
-	return s.invoker.Tell(from, to, msg)
+	return cluster.SendToNode(from, to, msg)
 }
 
 func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
-	if s.IsStop() {
-		return nil, gen.ErrActorSystemClosed
-	}
 	if timeout <= 0 {
 		timeout = gen.DefaultActorAskTimeout
 	}
-	proc, ok := s.getProcess(target)
-	if !ok {
-		return nil, gen.ErrActorNotFound
+	proc, err := s.getActiveProcess(target)
+	if err != nil {
+		return nil, err
 	}
 	reply := newAskReply()
-	err := proc.send(gen.ActorEnvelope{
+	err = proc.send(gen.ActorEnvelope{
 		Payload: msg,
 		Sender:  from,
 		Respond: reply.responder(),
@@ -202,14 +180,22 @@ func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
 }
 
 func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
+	proc, err := s.getActiveProcess(target)
+	if err != nil {
+		return err
+	}
+	return proc.send(env)
+}
+
+func (s *System) getActiveProcess(target any) (*process, error) {
 	if s.IsStop() {
-		return gen.ErrActorSystemClosed
+		return nil, gen.ErrActorSystemClosed
 	}
 	proc, ok := s.getProcess(target)
 	if !ok {
-		return gen.ErrActorNotFound
+		return nil, gen.ErrActorNotFound
 	}
-	return proc.send(env)
+	return proc, nil
 }
 
 func (s *System) StopProcess(target any) {
@@ -228,7 +214,7 @@ func (s *System) Stop(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	s.lifecycleMu.Lock()
-	s.waitGroup.Cancel() // 再广播退出
+	s.waitGroup.Cancel()
 	s.lifecycleMu.Unlock()
 
 	return s.waitGroup.Wait(ctx)

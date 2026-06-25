@@ -4,7 +4,6 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
-	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/stopper"
 	"sync"
@@ -12,8 +11,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type stopEnvelopeMessage struct {
-}
+const actorProcessComponent = "actor.process"
+
+type stopEnvelopeMessage struct{}
 
 type process struct {
 	stopper.Stopper
@@ -38,25 +38,11 @@ func (c *process) getName() string {
 
 func (c *process) run(ctx context.Context, actor gen.IActor) {
 	c.runCtx, c.cancel = context.WithCancel(ctx)
+	c.context = c.newActorContext(actor)
 
-	system := c.system
-	c.context = &actorContext{
-		self:       c.pid,
-		system:     system,
-		initArgs:   c.initArgs,
-		done:       c.runCtx.Done(),
-		actor:      actor,
-		askTimeout: gen.DefaultActorAskTimeout,
-		route:      c.route,
-	}
+	defer c.exit()
 
-	obs.Inc("actor.process_total")
-
-	defer func() {
-		c.exit()
-	}()
-
-	glog.Info("actor启动", glog.Component("actor.process"), glog.PID(c.pid))
+	glog.Info("actor启动", glog.Component(actorProcessComponent), glog.PID(c.pid))
 
 	c.invokeWithPanicCallback(actor, func() error {
 		return actor.OnInit(c.context)
@@ -75,6 +61,18 @@ func (c *process) run(ctx context.Context, actor gen.IActor) {
 	}
 }
 
+func (c *process) newActorContext(actor gen.IActor) *actorContext {
+	return &actorContext{
+		self:       c.pid,
+		system:     c.system,
+		initArgs:   c.initArgs,
+		done:       c.runCtx.Done(),
+		actor:      actor,
+		askTimeout: gen.DefaultActorAskTimeout,
+		route:      c.route,
+	}
+}
+
 func (c *process) invokeWithPanicCallback(handler gen.IActor, fn func() error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -88,7 +86,7 @@ func (c *process) invokeWithPanicCallback(handler gen.IActor, fn func() error) {
 }
 
 func (c *process) onError(ctx gen.IContext, handler gen.IActor, err interface{}) {
-	glog.Error("actor发生错误", glog.PID(c.pid), zap.Any("err", err))
+	glog.Error("actor发生错误", glog.Component(actorProcessComponent), glog.PID(c.pid), zap.Any(glog.FieldErr, err))
 	_ = handler.OnError(ctx, err)
 }
 
@@ -111,17 +109,20 @@ func (c *process) onMessage(ctx gen.IContext, actor gen.IActor, env gen.ActorEnv
 
 func (c *process) send(env gen.ActorEnvelope) error {
 	if c.IsStop() {
-		glog.Error("actor接收消息错误", glog.Component("actor.process"), glog.PID(c.pid), glog.Err(gen.ErrActorProcessStopped))
+		c.logSendError(gen.ErrActorProcessStopped)
 		return gen.ErrActorProcessStopped
 	}
 	select {
 	case c.mailbox <- env:
 		return nil
 	default:
-		obs.Inc("actor.mailbox_full_total")
-		glog.Error("actor接收消息错误", glog.Component("actor.process"), glog.PID(c.pid), glog.Err(gen.ErrActorMailboxFull))
+		c.logSendError(gen.ErrActorMailboxFull)
 		return gen.ErrActorMailboxFull
 	}
+}
+
+func (c *process) logSendError(err error) {
+	glog.Error("actor接收消息错误", glog.Component(actorProcessComponent), glog.PID(c.pid), glog.Err(err))
 }
 
 func (c *process) exit() {
@@ -130,7 +131,6 @@ func (c *process) exit() {
 	c.invokeWithPanicCallback(c.context.Actor(), func() error {
 		return c.context.Actor().OnDestroy(c.context)
 	})
-	obs.Dec("actor.process_total")
 }
 
 func (c *process) requestStop() {
@@ -143,17 +143,21 @@ func (c *process) requestStop() {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		select {
-		case c.mailbox <- stopEnv:
-		default:
-			// 邮箱满时异步重试，保证终止消息最终入队。
-			grs.SafeGo(func() {
-				select {
-				case c.mailbox <- stopEnv:
-				case <-ctx.Done():
-				}
-			})
-		}
+		c.enqueueStopEnvelope(ctx, stopEnv)
 		glog.Info("actor请求关闭", glog.PID(c.pid))
 	})
+}
+
+func (c *process) enqueueStopEnvelope(ctx context.Context, stopEnv gen.ActorEnvelope) {
+	select {
+	case c.mailbox <- stopEnv:
+	default:
+		// 邮箱满时异步重试，保证终止消息最终入队。
+		grs.SafeGo(func() {
+			select {
+			case c.mailbox <- stopEnv:
+			case <-ctx.Done():
+			}
+		})
+	}
 }

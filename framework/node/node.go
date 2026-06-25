@@ -79,7 +79,7 @@ func (n *Node) init(options gen.NodeOptions) {
 
 	compCluster := cluster.NewComponent(n)
 
-	compSystem := actor.NewComponent(n)
+	compSystem := actor.NewSystem(n)
 
 	n.AddComponents(compRegistry, compSystem, compCluster)
 

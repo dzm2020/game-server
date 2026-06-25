@@ -5,7 +5,7 @@ import (
 )
 
 type IComponent interface {
-	Init() error
+	Init(ctx context.Context) error
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 }

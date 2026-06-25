@@ -28,16 +28,11 @@ type ActorEnvelope struct {
 type ISystem interface {
 	Spawn(handler ActorHandler, opts SpawnOptions) (*PID, error)
 	SpawnActor(handler IActor, opts SpawnOptions) (*PID, error)
-	SetRemoteInvoker(invoker IRemoteInvoker)
 	Tell(from *PID, target any, msg *Message) error
 	Ask(from *PID, target any, msg *Message, timeout time.Duration) ([]byte, error)
 	DoTask(from *PID, target any, task ActorTask) error
 	SendEnvelope(target any, env ActorEnvelope) error
 	StopProcess(target any)
-	// Stop 优雅停止 Actor 系统。
-	// 幂等：可重复调用，仅第一次执行真实停止流程；后续调用返回与首次一致的结果。
-	// 阻塞：阻塞直到所有 Actor 退出完成，或 ctx.Done。
-	// 返回：完全停止返回 nil；若被 ctx 取消/超时或停止过程失败，返回 error。
 	Stop(ctx context.Context) error
 }
 

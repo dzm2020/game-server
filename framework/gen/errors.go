@@ -24,8 +24,8 @@ func (E *Error) Code() int32 {
 }
 
 var (
+	ErrNodeIsNil = NewError("node is nil", 1)
 	// actor
-	ErrActorProcessStopped      = NewError("actor process is stopped", 1)
 	ErrActorMailboxFull         = NewError("actor mailbox is full", 2)
 	ErrActorAskTimeout          = NewError("actor ask timeout", 3)
 	ErrActorNoResponder         = NewError("actor message is not ask-able", 4)
@@ -40,6 +40,8 @@ var (
 	ErrActorRouteNotFound       = NewError("actor route entry not found", 13)
 	ErrActorClusterNil          = NewError("actor cluster is nil", 14)
 	ErrActorClusterAskNotImpl   = NewError("actor cluster ask is not implemented", 15)
+	ErrActorSystemNil           = NewError("actor system is nil", 16)
+	ErrActorProcessStopped      = NewError("actor process is stopped", 17)
 
 	// network
 	ErrCodecNotConfigured  = NewError("codec is not configured", 30)

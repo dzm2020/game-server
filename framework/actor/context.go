@@ -18,6 +18,8 @@ type actorContext struct {
 	route      gen.IActorRoute
 }
 
+func noopStop() {}
+
 func (c *actorContext) Self() *gen.PID {
 	return c.self
 }
@@ -43,19 +45,11 @@ func (c *actorContext) Done() <-chan struct{} {
 
 func (c *actorContext) Ticker(interval time.Duration, task gen.ActorTask) (stop func()) {
 	if interval <= 0 || task == nil {
-		return func() {}
+		return noopStop
 	}
-	//  todo 后续可以替换成异步定时器，这样就不需要每个timer启动一个协程了
-	ticker := time.NewTicker(interval)
-	stopCh := make(chan struct{})
-	var once sync.Once
 
-	stop = func() {
-		once.Do(func() {
-			close(stopCh)
-			ticker.Stop()
-		})
-	}
+	ticker := time.NewTicker(interval)
+	stop, stopCh := newStopController(ticker.Stop)
 
 	grs.SafeGo(func() {
 		defer stop()
@@ -78,24 +72,18 @@ func (c *actorContext) Ticker(interval time.Duration, task gen.ActorTask) (stop 
 
 func (c *actorContext) AfterFunc(delay time.Duration, task gen.ActorTask) (stop func()) {
 	if delay <= 0 || task == nil {
-		return func() {}
+		return noopStop
 	}
-	//  todo 后续可以替换成异步定时器，这样就不需要每个timer启动一个协程了
-	timer := time.NewTimer(delay)
-	stopCh := make(chan struct{})
-	var once sync.Once
 
-	stop = func() {
-		once.Do(func() {
-			close(stopCh)
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
+	timer := time.NewTimer(delay)
+	stop, stopCh := newStopController(func() {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
-		})
-	}
+		}
+	})
 
 	grs.SafeGo(func() {
 		defer stop()
@@ -110,6 +98,20 @@ func (c *actorContext) AfterFunc(delay time.Duration, task gen.ActorTask) (stop 
 	})
 
 	return stop
+}
+
+func newStopController(cleanup func()) (func(), <-chan struct{}) {
+	stopCh := make(chan struct{})
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			close(stopCh)
+			if cleanup != nil {
+				cleanup()
+			}
+		})
+	}
+	return stop, stopCh
 }
 
 func (c *actorContext) Tell(target any, msg *gen.Message) error {
