@@ -47,7 +47,7 @@ func NewClient(cfg ClientConfig) *Client {
 	)
 
 	p.ctx, p.cancelFunc = context.WithCancel(p.runGroup.Context())
-	p.logger.Info("初始换客户端", zap.String("address", p.address))
+	p.logger.Info("初始换客户端")
 	return p
 }
 
@@ -75,22 +75,16 @@ type Client struct {
 func (p *Client) getNodeId() string {
 	return p.nodeID
 }
-func (p *Client) run(waitReadyTimeout time.Duration) {
-	p.runGroup.Go(func(_ context.Context) {
-		//  阻塞等待连接成功
+func (p *Client) start() {
+	p.runGroup.Go(func(context.Context) {
 		if err := p.connect(); err != nil {
 			p.Close()
 			return
 		}
-	})
-	if err := p.waitReady(waitReadyTimeout); err != nil {
-		p.logger.Error("客户端连接等待成功", zap.Error(err))
+		p.startIOLoops()
+		p.logger.Info("客户端连接成功")
 		return
-	}
-
-	p.startIOLoops()
-
-	p.logger.Info("客户端连接成功")
+	})
 }
 
 // connect 建立连接
@@ -128,10 +122,10 @@ func (p *Client) connect() error {
 		p.logger.Error("客户端创建失败")
 		return err
 	}
-
+	//  懒连接，创建 ClientConn 时通常不会马上连。真正连接一般发生在第一次 RPC，或者你主动Connect
+	conn.Connect()
 	client := NewNodeServiceClient(conn)
-
-	stream, err := client.Stream(p.runGroup.Context(), grpc.WaitForReady(true))
+	stream, err := client.Stream(p.ctx, grpc.WaitForReady(true))
 	if err != nil {
 		p.logger.Error("客户端开启流失败")
 		_ = conn.Close()
@@ -158,24 +152,6 @@ func (p *Client) startIOLoops() {
 		p.recvLoop()
 		p.logger.Info("客户端读协程关闭")
 	})
-}
-
-func (p *Client) waitReady(timeout time.Duration) error {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for !p.IsConnected() {
-		select {
-		case <-p.runGroup.Context().Done():
-			return gen.ErrClusterClosed
-		case <-deadline.C:
-			return gen.ErrClusterWaitPeerReadyTimeout
-		case <-ticker.C:
-		}
-	}
-	return nil
 }
 
 // sendLoop 发送循环

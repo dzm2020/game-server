@@ -4,6 +4,7 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
+	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
 	"slices"
 
@@ -28,6 +29,7 @@ func New(node gen.INode) *Cluster {
 
 // Cluster 集群管理器
 type Cluster struct {
+	component.BaseComponent
 	node gen.INode
 
 	clusterNames []string
@@ -56,19 +58,42 @@ func (c *Cluster) validateDependencies() error {
 }
 
 func (c *Cluster) Init(ctx context.Context) error {
+	if err := c.BaseComponent.Init(ctx); err != nil {
+		return err
+	}
 	if err := c.validateDependencies(); err != nil {
 		return err
 	}
 	c.logger = glog.GetLogger().With(glog.Component(clusterComponent), glog.NodeID(c.selfNodeID()))
+
 	opts := c.node.GetOptions()
 	c.clientSendChanSize = opts.Grpc.ClientSendChanSize
 	c.clusterNames = opts.Clusters
 	c.server = NewNodeServer(opts.RpcAddress, c)
-
 	c.logger.Info("初始化成功",
 		zap.Strings("clusterNames", c.clusterNames),
 		zap.Int("clientSendChanSize", c.clientSendChanSize),
 	)
+	return nil
+}
+
+func (c *Cluster) Start(ctx context.Context) error {
+	if err := c.BaseComponent.Start(ctx); err != nil {
+		return err
+	}
+	c.logger.Info("开始启动")
+	c.bgGroup = grs.NewGroup(ctx)
+	if err := c.server.run(); err != nil {
+		return err
+	}
+
+	c.connectAll()
+
+	c.bgGroup.Go(func(ctx context.Context) {
+		c.connectPeers(ctx)
+	})
+
+	c.logger.Info("启动完成")
 	return nil
 }
 
@@ -103,28 +128,6 @@ func (c *Cluster) selfNodeID() string {
 		return ""
 	}
 	return c.node.GetId()
-}
-
-// GetSelfID 获取自身节点ID
-func (c *Cluster) GetSelfID() string {
-	return c.selfNodeID()
-}
-
-func (c *Cluster) Start(ctx context.Context) error {
-	c.logger.Info("开始启动")
-
-	if err := c.server.run(); err != nil {
-		return err
-	}
-
-	c.connectAll()
-
-	c.bgGroup.Go(func(ctx context.Context) {
-		c.connectPeers(ctx)
-	})
-
-	c.logger.Info("启动完成")
-	return nil
 }
 
 func (c *Cluster) connectPeers(ctx context.Context) {
@@ -173,8 +176,8 @@ func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
 		sendSize: c.clientSendChanSize,
 		cluster:  c,
 	})
-	client.run(time.Second)
 	c.addClient(client)
+	client.start()
 }
 
 // SendToNode 发送消息到指定节点
@@ -197,7 +200,7 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 		return err
 	}
 	c.logger.Debug("客户端发送消息",
-		zap.String("from", to.String()),
+		zap.String("from", from.String()),
 		zap.String("to", to.String()),
 		zap.Uint16("msgID", msg.ID()),
 	)
@@ -220,37 +223,47 @@ func (c *Cluster) resolveSendClient(to *gen.PID) (*Client, error) {
 	return client, nil
 }
 
-// Broadcast 广播消息到所有节点
-func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) {
+// Broadcast
+//
+//	@Description: 广播消息到所有节点
+//	@receiver c
+//	@param to
+//	@param msg
+//	@return error  部分失败仍返回 nil
+func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
+
 	if to == nil {
-		c.logger.Error("广播到节点失败",
-			zap.String("to", to.String()),
-			glog.Err(gen.ErrActorPidNil),
-		)
-		return
+		c.logger.Error("集群广播", glog.Err(gen.ErrActorPidNil))
+		return gen.ErrActorPidNil
 	}
+	if msg == nil {
+		c.logger.Error("集群广播", glog.Err(gen.ErrMessageNil))
+		return gen.ErrMessageNil
+	}
+
 	var success int
 	c.rangeClient(func(client *Client) bool {
 		target := convertor.DeepClone(to)
 		target.NodeID = client.getNodeId()
 		m, err := NewClusterMessage(gen.NoSender, target, msg)
 		if err != nil {
-			c.logger.Warn("广播到节点失败", zap.String("to", to.String()), glog.Err(err))
+			c.logger.Warn("集群广播", zap.String("to", to.String()), glog.Err(err))
 			return true
 		}
 		if err := client.send(m); err != nil {
-			c.logger.Warn("广播到节点失败", zap.String("to", to.String()), glog.Err(err))
+			c.logger.Warn("集群广播", zap.String("to", to.String()), glog.Err(err))
 			return true
 		}
 		success++
 		return true
 	})
 
-	c.logger.Debug("grpc集群广播消息到所有节点",
+	c.logger.Debug("集群广播",
 		zap.String("to", to.String()),
 		zap.Any("msg", msg),
 		zap.Int("success", success),
 	)
+	return nil
 }
 
 func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
@@ -267,23 +280,34 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 	if err = system.Tell(msg.SourcePid, to, m); err != nil {
 		return err
 	}
-	c.logger.Debug("grpc集群接受处理消息", zap.Any("msg", msg))
+	c.logger.Debug("分发消息",
+		zap.String("from", msg.SourcePid.String()),
+		zap.String("to", msg.TargetPid.String()),
+	)
 	return nil
 }
 
 // Stop 关闭集群连接
 func (c *Cluster) Stop(ctx context.Context) error {
+	if err := c.BaseComponent.Stop(ctx); err != nil {
+		return err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c.bgGroup.Cancel()
+
 	if c.server != nil {
 		c.server.shutdown()
 	}
-	if err := c.bgGroup.Wait(ctx); err != nil {
-		c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
-		return err
+
+	if c.bgGroup != nil {
+		c.bgGroup.Cancel()
+		if err := c.bgGroup.Wait(ctx); err != nil {
+			c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
+			return err
+		}
 	}
+
 	c.logger.Info("集群已关闭")
 	return nil
 }

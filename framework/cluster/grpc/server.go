@@ -49,11 +49,13 @@ func (s *NodeServer) run() error {
 	s.cluster.bgGroup.Go(func(ctx context.Context) {
 		if err := s.server.Serve(s.lis); err != nil {
 			if isServerStreamClosedErr(err) {
-				s.logger.Info("Server退出", glog.Err(err))
+				s.logger.Info("Server退出", zap.Error(err))
 				return
 			}
-			s.logger.Error("Server退出", glog.Err(err))
+			s.logger.Error("Server退出", zap.Error(err))
 			return
+		} else {
+			s.logger.Info("Server退出")
 		}
 	})
 	return nil
@@ -94,8 +96,11 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
+			if isServerStreamClosedErr(err) {
+				s.logger.Info("接收Stream退出", glog.Err(err))
+				return nil
+			}
 			return err
-
 		}
 		grs.Try(func() {
 			if err = s.cluster.Dispatch(msg); err != nil {

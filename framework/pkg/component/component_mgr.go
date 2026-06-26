@@ -115,7 +115,7 @@ func (cm *Manager) Init() error {
 			continue
 		}
 
-		if err := component.Init(); err != nil {
+		if err := component.Init(context.Background()); err != nil {
 			return err
 		}
 	}

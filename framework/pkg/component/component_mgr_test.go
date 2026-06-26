@@ -17,7 +17,7 @@ type recordingComponent struct {
 	stopCalled bool
 }
 
-func (c *recordingComponent) Init() error {
+func (c *recordingComponent) Init(_ context.Context) error {
 	*c.events = append(*c.events, c.id+":init")
 	return c.initErr
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"game-server/framework/actor"
 	"game-server/framework/cluster"
+	grpc_cluster "game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
 	"game-server/framework/obs"
 	"game-server/framework/pkg/component"
@@ -77,7 +78,10 @@ func (n *Node) init(options gen.NodeOptions) {
 
 	compRegistry := registry.NewComponent(n)
 
-	compCluster := cluster.NewComponent(n)
+	compCluster := options.Cluster
+	if compCluster == nil {
+		compCluster = grpc_cluster.New(n)
+	}
 
 	compSystem := actor.NewSystem(n)
 
