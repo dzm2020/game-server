@@ -25,7 +25,7 @@ func Try(fn func(), recoverFunc func(e error)) {
 					recoverFunc(err)
 				}
 			}
-			glog.Error("panic recovered", zap.Any("panic", rec), zap.ByteString("stack", debug.Stack()))
+			glog.Panic("panic recovered", zap.Any("panic", rec), zap.ByteString("stack", debug.Stack()))
 		}
 	}()
 	if fn != nil {

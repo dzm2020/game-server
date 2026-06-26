@@ -17,14 +17,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const serverComponent = "cluster.grpc.server"
-
 // NewNodeServer 创建服务端
-func NewNodeServer(serveGroup *grs.Group, address string, dispatcher Dispatcher) *NodeServer {
+func NewNodeServer(address string, cluster *Cluster) *NodeServer {
 	return &NodeServer{
 		address:    address,
-		dispatcher: dispatcher,
-		serveGroup: serveGroup,
+		cluster:    cluster,
+		serveGroup: cluster.bgGroup,
 	}
 }
 
@@ -34,8 +32,29 @@ type NodeServer struct {
 	address    string
 	lis        net.Listener
 	server     *grpc.Server
-	dispatcher Dispatcher
+	cluster    *Cluster
 	serveGroup *grs.Group
+}
+
+func (s *NodeServer) run() error {
+	logger := s.cluster.logger
+	logger.Info("Starting gRPC Server", zap.String("address", s.address))
+
+	if err := s.listen(); err != nil {
+		logger.Error("Starting gRPC Server", zap.String("address", s.address))
+		return err
+	}
+	s.serveGroup.Go(func(ctx context.Context) {
+		if err := s.server.Serve(s.lis); err != nil {
+			if s.isNodeServerStopErr(err) {
+				logger.Info("GrpcServer.Serve", zap.Error(err))
+				return
+			}
+			logger.Error("GrpcServer.Serve", zap.Error(err))
+			return
+		}
+	})
+	return nil
 }
 
 // listen
@@ -44,11 +63,8 @@ type NodeServer struct {
 //	@receiver s
 //	@return error
 func (s *NodeServer) listen() error {
-	//  启动服务端
 	lis, err := net.Listen("tcp", s.address)
 	if err != nil {
-
-		glog.Error("grpc集群服务监听", glog.Component(serverComponent), zap.String("listen_addr", s.address), glog.Err(err))
 		return err
 	}
 	server := grpc.NewServer(
@@ -62,71 +78,42 @@ func (s *NodeServer) listen() error {
 	RegisterNodeServiceServer(server, s)
 	s.lis = lis
 	s.server = server
-
-	glog.Info("grpc集群服务监听", glog.Component(serverComponent), zap.String("listen_addr", s.address))
 	return nil
-}
-
-// Serve
-//
-//	@Description: 阻塞调用
-//	@receiver s
-//	@return error
-func (s *NodeServer) Serve() error {
-	if err := s.listen(); err != nil {
-		return err
-	}
-	startCtx, cancel := context.WithTimeout(s.serveGroup.Context(), 3*time.Second)
-	defer cancel()
-	serveErrCh := make(chan error, 1)
-	s.serveGroup.Go(func(context.Context) {
-		err := s.server.Serve(s.lis)
-		if isNodeServerStopErr(err) {
-			glog.Info("grpc集群服务端协程停止", glog.Component(serverComponent), zap.String("listen_addr", s.address))
-			select {
-			case serveErrCh <- nil:
-			default:
-			}
-			return
-		}
-		select {
-		case serveErrCh <- err:
-		default:
-		}
-		glog.Info("grpc集群服务端协程停止", glog.Component(serverComponent), zap.String("listen_addr", s.address), glog.Err(err))
-	})
-
-	select {
-	case err := <-serveErrCh:
-		return err
-	case <-startCtx.Done():
-		return nil
-	}
 }
 
 // Stream 实现双向流
 func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
-	glog.Info("grpc集群服务端收协程启动", glog.Component(serverComponent))
+	logger := s.cluster.logger
+	logger.Info("grpc远程节点流接收消息")
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
+			// 对端 handler 正常 return nil，流结束 || 连接关闭
 			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				glog.Info("grpc集群服务端接收终止", glog.Component(serverComponent), glog.Err(err))
+				logger.Info("grpc远程节点流接收消息", glog.Err(err))
 				return nil
 			}
 
-			glog.Error("grpc集群服务端接收", glog.Component(serverComponent), glog.Err(err))
+			logger.Error("grpc远程节点流接收消息", glog.Err(err))
 			return err
-		}
 
-		if err = s.dispatcher.Dispatch(msg); err != nil {
-			glog.Error("grpc集群服务端接收", glog.Component(serverComponent), glog.Err(err))
 		}
+		grs.Try(func() {
+			if err = s.cluster.Dispatch(msg); err != nil {
+				logger.Error("grpc远程节点流接收消息", glog.Err(err))
+			}
+		}, nil)
 	}
 }
 
+func (s *NodeServer) isNodeServerStopErr(err error) bool {
+	return err == nil ||
+		errors.Is(err, grpc.ErrServerStopped) ||
+		errors.Is(err, net.ErrClosed) ||
+		strings.Contains(err.Error(), "use of closed network connection")
+}
+
 func (s *NodeServer) shutdown() error {
-	glog.Info("grpc集群服务端关闭", glog.Component(serverComponent))
 	if s.lis != nil {
 		_ = s.lis.Close()
 	}
@@ -143,11 +130,4 @@ func (s *NodeServer) shutdown() error {
 		}
 	}
 	return nil
-}
-
-func isNodeServerStopErr(err error) bool {
-	return err == nil ||
-		errors.Is(err, grpc.ErrServerStopped) ||
-		errors.Is(err, net.ErrClosed) ||
-		strings.Contains(err.Error(), "use of closed network connection")
 }
