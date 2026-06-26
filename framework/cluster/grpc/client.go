@@ -20,22 +20,48 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const peerComponent = "cluster.grpc.peer"
+const clientComponent = "cluster.grpc.client"
 
-// PeerConn 节点连接
-type PeerConn struct {
+// ClientConfig 节点配置
+type ClientConfig struct {
+	nodeID   string
+	address  string
+	sendSize int
+	cluster  *Cluster
+}
+
+// NewClient 创建节点连接
+func NewClient(cfg ClientConfig) *Client {
+	p := &Client{
+		nodeID:   cfg.nodeID,
+		address:  cfg.address,
+		sendCh:   make(chan *gen.ClusterMessage, cfg.sendSize),
+		cluster:  cfg.cluster,
+		runGroup: cfg.cluster.bgGroup,
+	}
+
+	p.logger = glog.GetLogger().With(
+		glog.Component(clientComponent),
+		glog.NodeID(cfg.nodeID),
+		zap.String("address", cfg.address),
+	)
+
+	p.ctx, p.cancelFunc = context.WithCancel(p.runGroup.Context())
+	p.logger.Info("初始换客户端", zap.String("address", p.address))
+	return p
+}
+
+type Client struct {
 	mu sync.RWMutex
 
 	nodeID  string
 	address string
 
 	conn   *grpc.ClientConn
-	client NodeServiceClient
 	stream NodeService_StreamClient
 
-	sendCh   chan *gen.ClusterMessage
-	cluster  *Cluster
-	onClosed func(nodeID string, peer *PeerConn)
+	sendCh  chan *gen.ClusterMessage
+	cluster *Cluster
 
 	runGroup  *grs.Group
 	closeOnce sync.Once
@@ -46,82 +72,29 @@ type PeerConn struct {
 	cancelFunc context.CancelFunc
 }
 
-// PeerConfig 节点配置
-type PeerConfig struct {
-	nodeID  string
-	address string
-	sendCh  chan *gen.ClusterMessage
-	cluster *Cluster
+func (p *Client) getNodeId() string {
+	return p.nodeID
 }
-
-// NewPeer 创建节点连接
-func NewPeer(cfg *PeerConfig) *PeerConn {
-	p := &PeerConn{
-		nodeID:   cfg.nodeID,
-		address:  cfg.address,
-		sendCh:   cfg.sendCh,
-		cluster:  cfg.cluster,
-		runGroup: cfg.cluster.bgGroup,
-	}
-	p.logger = p.cluster.logger.With(glog.NodeID(p.nodeID))
-	p.ctx, p.cancelFunc = context.WithCancel(p.runGroup.Context())
-
-	p.logger.Info("grpc集群新增连接", zap.String("address", p.address))
-	return p
-}
-func (p *PeerConn) run(waitReadyTimeout time.Duration) {
-
-	p.runGroup.Go(func(ctx context.Context) {
+func (p *Client) run(waitReadyTimeout time.Duration) {
+	p.runGroup.Go(func(_ context.Context) {
 		//  阻塞等待连接成功
-		p.logger.Info("grpc远程节点连接", zap.String("address", p.address))
 		if err := p.connect(); err != nil {
-			p.logger.Error("grpc远程节点连接失败", zap.String("address", p.address), glog.Err(err))
 			p.Close()
 			return
 		}
-
-		p.logger.Info("grpc远程节点连接成功", zap.String("address", p.address))
-
-		p.runGroup.Go(func(ctx context.Context) {
-			p.logger.Info("grpc远程节点写协程启动")
-			p.sendLoop(ctx)
-			p.logger.Info("grpc远程节点写协程关闭")
-		})
-
-		p.runGroup.Go(func(ctx context.Context) {
-			p.logger.Info("grpc远程节点读协程启动")
-			p.recvLoop(ctx)
-			p.logger.Info("grpc远程节点读协程关闭")
-		})
 	})
-
 	if err := p.waitReady(waitReadyTimeout); err != nil {
-		p.logger.Error("grpc等待客户端连接失败", zap.Error(err))
+		p.logger.Error("客户端连接等待成功", zap.Error(err))
+		return
 	}
 
-	p.logger.Info("grpc客户端连接成功")
-}
+	p.startIOLoops()
 
-func (p *PeerConn) waitReady(timeout time.Duration) error {
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for !p.IsConnected() {
-		select {
-		case <-p.runGroup.Context().Done():
-			return gen.ErrClusterClosed
-		case <-deadline.C:
-			return gen.ErrClusterWaitPeerReadyTimeout
-		case <-ticker.C:
-		}
-	}
-	return nil
+	p.logger.Info("客户端连接成功")
 }
 
 // connect 建立连接
-func (p *PeerConn) connect() error {
+func (p *Client) connect() error {
 	conn, err := grpc.NewClient(p.address,
 		// 生产环境建议替换为 TLS 凭证（credentials.NewTLS），
 		// 当前使用明文凭证适用于内网可信环境。
@@ -152,6 +125,7 @@ func (p *PeerConn) connect() error {
 		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"pick_first"}`),
 	)
 	if err != nil {
+		p.logger.Error("客户端创建失败")
 		return err
 	}
 
@@ -159,22 +133,53 @@ func (p *PeerConn) connect() error {
 
 	stream, err := client.Stream(p.runGroup.Context(), grpc.WaitForReady(true))
 	if err != nil {
-		p.logger.Error("grpc远程节点流失败", glog.Err(err))
-		conn.Close()
+		p.logger.Error("客户端开启流失败")
+		_ = conn.Close()
 		return err
 	}
 
 	p.mu.Lock()
 	p.conn = conn
-	p.client = client
 	p.stream = stream
 	p.mu.Unlock()
+	p.logger.Info("客户端连接成功")
+	return nil
+}
+
+func (p *Client) startIOLoops() {
+	p.runGroup.Go(func(_ context.Context) {
+		p.logger.Info("客户端写协程启动")
+		p.sendLoop()
+		p.logger.Info("客户端写协程关闭")
+	})
+
+	p.runGroup.Go(func(_ context.Context) {
+		p.logger.Info("客户端读协程启动")
+		p.recvLoop()
+		p.logger.Info("客户端读协程关闭")
+	})
+}
+
+func (p *Client) waitReady(timeout time.Duration) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for !p.IsConnected() {
+		select {
+		case <-p.runGroup.Context().Done():
+			return gen.ErrClusterClosed
+		case <-deadline.C:
+			return gen.ErrClusterWaitPeerReadyTimeout
+		case <-ticker.C:
+		}
+	}
 	return nil
 }
 
 // sendLoop 发送循环
-func (p *PeerConn) sendLoop(ctx context.Context) {
-
+func (p *Client) sendLoop() {
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -183,17 +188,15 @@ func (p *PeerConn) sendLoop(ctx context.Context) {
 			if !ok {
 				return
 			}
-			p.mu.RLock()
-			stream := p.stream
-			p.mu.RUnlock()
+			stream := p.currentStream()
 
 			if stream == nil {
-				p.logger.Error("grpc远程节点发送消息失败")
+				p.logger.Error("发送流为空")
 				continue
 			}
 
 			if err := stream.Send(msg); err != nil {
-				p.logger.Error("grpc远程节点发送消息失败", glog.Err(err))
+				p.logger.Error("流发送失败", glog.Err(err))
 				p.Close()
 				return
 			}
@@ -202,55 +205,63 @@ func (p *PeerConn) sendLoop(ctx context.Context) {
 }
 
 // recvLoop 接收循环
-func (p *PeerConn) recvLoop(ctx context.Context) {
+func (p *Client) recvLoop() {
 	for {
-		p.mu.RLock()
-		stream := p.stream
-		p.mu.RUnlock()
+		stream := p.currentStream()
 
 		if stream == nil {
+			p.logger.Error("接收流为nil")
 			return
 		}
 
 		msg, err := stream.Recv()
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
-			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				p.logger.Info("grpc远程节点流接收消息", glog.Err(err))
+			if isStreamClosedErr(err) {
+				p.logger.Info("接收流关闭", glog.Err(err))
 				p.Close()
 				return
 			}
 
-			p.logger.Error("grpc远程节点流接收消息", glog.Err(err))
+			p.logger.Error("接收流关闭", glog.Err(err))
 			p.Close()
 			return
 
 		}
 		if err = p.cluster.Dispatch(msg); err != nil {
-			p.logger.Error("grpc远程节点流接收消息", glog.Err(err))
+			p.logger.Error("分发消息失败", glog.Err(err))
 		}
 	}
 }
 
-func (p *PeerConn) send(msg *gen.ClusterMessage) error {
-
+func (p *Client) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
 		err := gen.ErrClusterPeerNotConnected
-		p.logger.Error("grpc远程节点发送队列写入失败", glog.Err(err))
+		p.logger.Error("客户端发送消息", glog.Err(err))
 		return err
 	}
 	select {
 	case p.sendCh <- msg:
 	default:
 		err := gen.ErrClusterSendChannelFull
-		p.logger.Error("grpc远程节点发送队列写入失败", glog.Err(err))
+		p.logger.Error("客户端发送消息", glog.Err(err))
 		return err
 	}
 	return nil
 }
 
+func (p *Client) currentStream() NodeService_StreamClient {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.stream
+}
+
+func isStreamClosedErr(err error) bool {
+	return err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+}
+
 // IsConnected 检查连接状态
-func (p *PeerConn) IsConnected() bool {
+func (p *Client) IsConnected() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -262,8 +273,7 @@ func (p *PeerConn) IsConnected() bool {
 }
 
 // Close 关闭节点连接
-func (p *PeerConn) Close() {
-
+func (p *Client) Close() {
 	p.closeOnce.Do(func() {
 		if p.cancelFunc != nil {
 			p.cancelFunc()
@@ -273,8 +283,8 @@ func (p *PeerConn) Close() {
 		stream := p.stream
 		conn := p.conn
 
-		p.client = nil
 		p.conn = nil
+		p.stream = nil
 		p.mu.Unlock()
 
 		if stream != nil {
@@ -283,9 +293,7 @@ func (p *PeerConn) Close() {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		if p.onClosed != nil {
-			p.onClosed(p.nodeID, p)
-		}
-		p.logger.Info("grpc远程节点连接已关闭")
+		p.cluster.removeClient(p)
+		p.logger.Info("客户端关闭")
 	})
 }

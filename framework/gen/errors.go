@@ -42,12 +42,14 @@ var (
 	ErrActorClusterAskNotImpl   = NewError("actor cluster ask is not implemented", 15)
 	ErrActorSystemNil           = NewError("actor system is nil", 16)
 	ErrActorProcessStopped      = NewError("actor process is stopped", 17)
+	ErrActorPidNil              = NewError("actor pid is nil", 18)
 
 	// network
 	ErrCodecNotConfigured  = NewError("codec is not configured", 30)
 	ErrConnectionClosed    = NewError("connection is closed", 31)
 	ErrTLSCertFileRequired = NewError("tls cert file is required", 32)
 	ErrTLSKeyFileRequired  = NewError("tls key file is required", 33)
+	ErrMessageNil          = NewError("message is nil", 19)
 
 	// cluster / registry
 	ErrClusterSystemNil            = NewError("cluster system is nil", 50)

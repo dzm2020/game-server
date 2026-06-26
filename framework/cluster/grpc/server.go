@@ -7,7 +7,6 @@ import (
 	"game-server/framework/pkg/glog"
 	"io"
 	"net"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -17,40 +16,43 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const serverComponent = "cluster.grpc.server"
+
 // NewNodeServer 创建服务端
 func NewNodeServer(address string, cluster *Cluster) *NodeServer {
 	return &NodeServer{
-		address:    address,
-		cluster:    cluster,
-		serveGroup: cluster.bgGroup,
+		address: address,
+		cluster: cluster,
+		logger:  glog.GetLogger().With(glog.Component(serverComponent), zap.String("address", address)),
 	}
 }
 
 // NodeServer gRPC服务端
 type NodeServer struct {
 	UnimplementedNodeServiceServer
-	address    string
-	lis        net.Listener
-	server     *grpc.Server
-	cluster    *Cluster
-	serveGroup *grs.Group
+	address string
+	lis     net.Listener
+	server  *grpc.Server
+	cluster *Cluster
+	logger  *zap.Logger
 }
 
 func (s *NodeServer) run() error {
-	logger := s.cluster.logger
-	logger.Info("Starting gRPC Server", zap.String("address", s.address))
+
+	s.logger.Info("Server启动")
 
 	if err := s.listen(); err != nil {
-		logger.Error("Starting gRPC Server", zap.String("address", s.address))
+		s.logger.Error("Server启动")
 		return err
 	}
-	s.serveGroup.Go(func(ctx context.Context) {
+
+	s.cluster.bgGroup.Go(func(ctx context.Context) {
 		if err := s.server.Serve(s.lis); err != nil {
-			if s.isNodeServerStopErr(err) {
-				logger.Info("GrpcServer.Serve", zap.Error(err))
+			if isServerStreamClosedErr(err) {
+				s.logger.Info("Server退出", glog.Err(err))
 				return
 			}
-			logger.Error("GrpcServer.Serve", zap.Error(err))
+			s.logger.Error("Server退出", glog.Err(err))
 			return
 		}
 	})
@@ -81,39 +83,38 @@ func (s *NodeServer) listen() error {
 	return nil
 }
 
-// Stream 实现双向流
+// Stream
+//
+//	@Description: 实现双向流
+//	@receiver s
+//	@param stream
+//	@return error
 func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
-	logger := s.cluster.logger
-	logger.Info("grpc远程节点流接收消息")
+	s.logger.Info("接收Stream启动")
 	for {
 		msg, err := stream.Recv()
 		if err != nil {
-			// 对端 handler 正常 return nil，流结束 || 连接关闭
-			if err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled {
-				logger.Info("grpc远程节点流接收消息", glog.Err(err))
-				return nil
-			}
-
-			logger.Error("grpc远程节点流接收消息", glog.Err(err))
 			return err
 
 		}
 		grs.Try(func() {
 			if err = s.cluster.Dispatch(msg); err != nil {
-				logger.Error("grpc远程节点流接收消息", glog.Err(err))
+				s.logger.Error("接收Stream", glog.Err(err))
 			}
 		}, nil)
 	}
 }
 
-func (s *NodeServer) isNodeServerStopErr(err error) bool {
-	return err == nil ||
-		errors.Is(err, grpc.ErrServerStopped) ||
-		errors.Is(err, net.ErrClosed) ||
-		strings.Contains(err.Error(), "use of closed network connection")
+func isServerStreamClosedErr(err error) bool {
+	return err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
 }
 
-func (s *NodeServer) shutdown() error {
+// shutdown
+//
+//	@Description: 关闭服务
+//	@receiver s
+//	@return error
+func (s *NodeServer) shutdown() {
 	if s.lis != nil {
 		_ = s.lis.Close()
 	}
@@ -129,5 +130,6 @@ func (s *NodeServer) shutdown() error {
 			s.server.Stop()
 		}
 	}
-	return nil
+	s.logger.Info("Server退出")
+	return
 }

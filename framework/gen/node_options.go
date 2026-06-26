@@ -10,21 +10,21 @@ import (
 type LoggerOptions = glog.Config
 
 type NodeOptions struct {
-	ID          string
-	Name        string
-	ExtAddress  string
-	RpcAddress  string
-	RemoteNames []string
-	Grpc        GrpcOptions
-	Consul      ConsulOptions
-	Logger      LoggerOptions
-	Behavior    INodeBehavior
-	Registry    IRegistry
-	Cluster     ICluster
+	ID         string
+	Name       string
+	ExtAddress string
+	RpcAddress string
+	Clusters   []string
+	Grpc       GrpcOptions
+	Consul     ConsulOptions
+	Logger     LoggerOptions
+	Behavior   INodeBehavior
+	Registry   IRegistry
+	Cluster    ICluster
 }
 
 type GrpcOptions struct {
-	PeerSendChanSize int
+	ClientSendChanSize int
 }
 
 type ConsulOptions struct {
@@ -100,15 +100,15 @@ func ValidateConsulOptions(options ConsulOptions) error {
 }
 
 func NormalizeGrpcOptions(options GrpcOptions) GrpcOptions {
-	if options.PeerSendChanSize <= 0 {
-		options.PeerSendChanSize = defaultGrpcPeerSendChanSize
+	if options.ClientSendChanSize <= 0 {
+		options.ClientSendChanSize = defaultGrpcPeerSendChanSize
 	}
 	return options
 }
 
 func ValidateGrpcOptions(options GrpcOptions) error {
-	if options.PeerSendChanSize <= 0 {
-		return fmt.Errorf("invalid grpc peer send chan size: %d", options.PeerSendChanSize)
+	if options.ClientSendChanSize <= 0 {
+		return fmt.Errorf("invalid grpc peer send chan size: %d", options.ClientSendChanSize)
 	}
 	return nil
 }
