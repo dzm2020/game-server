@@ -267,6 +267,12 @@ func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
 }
 
 func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
+	if msg == nil {
+		return gen.ErrMessageNil
+	}
+	if msg.TargetPid == nil || msg.SourcePid == nil {
+		return gen.ErrActorPidNil
+	}
 	system := c.node.GetSystem()
 	m, _, err := gen.Decode(msg.Data)
 	if err != nil {
