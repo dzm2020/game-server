@@ -12,9 +12,10 @@ type NodeOptions struct {
 	Name       string
 	ExtAddress string
 	RpcAddress string
-
-	Logger   LoggerOptions
-	Behavior INodeBehavior
+	Meta       map[string]string
+	Tags       []string
+	Logger     LoggerOptions
+	Behavior   INodeBehavior
 }
 
 func NormalizeNodeOptions(opts NodeOptions) NodeOptions {

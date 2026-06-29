@@ -3,7 +3,6 @@ package network
 import (
 	"errors"
 	"game-server/framework/gen"
-	"game-server/framework/obs"
 	"game-server/framework/pkg/buffer"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
@@ -61,7 +60,7 @@ func (c *TCPConnection) readLoop() {
 				return
 			}
 			if !errors.Is(err, net.ErrClosed) {
-				obs.Inc("network.tcp_read_error_total")
+
 				glog.Error("TCP连接读取错误", gen.FieldComponent("network.tcp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 			}
 			return
@@ -137,7 +136,7 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 		if err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
-				obs.Inc("network.tcp_write_timeout_total")
+
 				glog.Warn("TCP写入超时",
 					gen.FieldComponent("network.tcp"),
 					gen.FieldConnID(c.ID()),
@@ -174,7 +173,6 @@ func (c *TCPConnection) Close(err error) (w error) {
 
 	c.baseConn.Close(c, err)
 
-	obs.Inc("network.tcp_close_total")
 	glog.Info("TCP连接断开", gen.FieldComponent("network.tcp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }

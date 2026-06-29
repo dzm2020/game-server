@@ -97,7 +97,7 @@ func (c *Cluster) Start(ctx context.Context) error {
 		c.connectAll()
 
 		c.bgGroup.Go(func(ctx context.Context) {
-			c.connectPeers(ctx)
+			c.connectLoop(ctx)
 		})
 		c.logger.Info("启动完成")
 		return nil
@@ -138,7 +138,7 @@ func (c *Cluster) selfNodeID() string {
 	return c.node.GetId()
 }
 
-func (c *Cluster) connectPeers(ctx context.Context) {
+func (c *Cluster) connectLoop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second * 3)
 	defer ticker.Stop()
 	for {

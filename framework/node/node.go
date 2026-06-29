@@ -143,31 +143,37 @@ func (n *Node) SetCluster(cluster gen.ICluster) error {
 }
 
 func (n *Node) Startup() (err error) {
-
 	n.AddComponents(n.registry, n.system, n.cluster)
 
 	if err = n.Start(context.Background()); err != nil {
 		return err
 	}
-	var names []string
-	n.IManager.Range(func(component component.IComponent) {
-		names = append(names, reflect.TypeOf(component).String())
-	})
 
-	glog.Info("节点启动信息",
+	reg := gen.ServiceInstance{
+		ID:         n.GetId(),
+		Name:       n.GetName(),
+		ExtAddress: n.GetExtAddress(),
+		RpcAddress: n.GetRpcAddress(),
+		Meta:       n.options.Meta,
+		Tags:       n.options.Tags,
+	}
+	//  注册节点
+	if err = n.GetRegistry().Register(reg); err != nil {
+		glog.Error("注册节点", gen.FieldErr(err))
+		return err
+	}
+
+	glog.Info("节点进入运行",
 		zap.String("ext_address", n.GetExtAddress()),
 		zap.String("rpc_address", n.GetRpcAddress()),
-		gen.FieldPID(os.Getpid()),
-		zap.Int("component_count", len(n.components)),
-		zap.Strings("components", names),
+		zap.Int("process_id", os.Getpid()),
 	)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
-	glog.Info("节点等待终止信号", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
 	sig := <-sigChan
-	glog.Info("节点停止运行", zap.String("signal", sig.String()))
+	glog.Info("节点收到退出信号", zap.String("signal", sig.String()))
 	return n.Stop(context.Background())
 }
 
@@ -187,8 +193,6 @@ func (n *Node) addComponentsToManager() error {
 }
 
 func (n *Node) Start(ctx context.Context) (err error) {
-	glog.Info("节点启动", zap.Int("component_count", len(n.components)))
-
 	n.options.Behavior.OnBeforeStart(n)
 
 	if err := n.addComponentsToManager(); err != nil {
@@ -202,15 +206,18 @@ func (n *Node) Start(ctx context.Context) (err error) {
 
 	n.options.Behavior.OnAfterStart(n)
 
-	glog.Info("节点启动完成")
+	glog.Info("节点组件启动完成", zap.Int("component_count", len(n.components)))
 	return nil
 }
 
 // Stop gracefully stops the node and all components.
 func (n *Node) Stop(ctx context.Context) error {
-	glog.Info("节点开始停止")
-
 	n.options.Behavior.OnBeforeStop(n)
+
+	if err := n.GetRegistry().Deregister(n.GetId()); err != nil {
+		glog.Error("注销节点", gen.FieldErr(err))
+		return err
+	}
 
 	stopErr := n.IManager.Stop(ctx)
 	if stopErr != nil {
@@ -219,7 +226,7 @@ func (n *Node) Stop(ctx context.Context) error {
 
 	n.options.Behavior.OnAfterStop(n, stopErr)
 
-	glog.Info("节点完成停止", gen.FieldErr(stopErr))
+	glog.Info("节点完成停止")
 	_ = glog.Stop()
 	return stopErr
 }

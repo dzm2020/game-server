@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"game-server/framework/gen"
-	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"net/http"
 
@@ -78,7 +77,6 @@ func (s *WebSocketServer) listenAndServe() error {
 func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		obs.Inc("network.websocket_upgrade_error_total")
 		glog.Error("WebSocket升级失败", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), gen.FieldErr(err))
 		return
 	}

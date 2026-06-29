@@ -4,7 +4,6 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/network"
-	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 
 	"go.uber.org/zap"
@@ -32,7 +31,7 @@ type gatWay struct {
 func (c *gatWay) Init() error {
 	server, err := network.NewServer(newEventHandler(c), c.options.ProtoAddr, c.options.NetworkOptions)
 	if err != nil {
-		obs.Inc("gateway.server_init_error_total")
+
 		glog.Error("网关创建网络服务失败",
 			gen.FieldComponent(gatewayComponent),
 			zap.String("proto_addr", c.options.ProtoAddr),
@@ -53,10 +52,10 @@ func (c *gatWay) Start(_ context.Context) error {
 	}
 
 	if err := c.server.Start(); err != nil {
-		obs.Inc("gateway.server_start_error_total")
+
 		return err
 	}
-	obs.Inc("gateway.server_start_total")
+
 	glog.Info("网关组件启动成功", gen.FieldComponent(gatewayComponent), zap.String("listen", c.server.Addr()))
 	return nil
 }
@@ -71,10 +70,10 @@ func (c *gatWay) routeInbound(conn network.IConnection, msg *gen.Message) error 
 		return err
 	}
 	if err := c.dispatchToClientAgent(pid, msg); err != nil {
-		obs.Inc("gateway.route_error_total")
+
 		return err
 	}
-	obs.Inc("gateway.route_total")
+
 	return nil
 }
 
@@ -85,13 +84,12 @@ func (c *gatWay) ensureClientAgent(conn network.IConnection) (*gen.PID, error) {
 	}
 
 	if err := c.bindConnection(conn); err != nil {
-		obs.Inc("gateway.bind_error_total")
+
 		glog.Error("网关绑定连接失败", gen.FieldComponent(gatewayComponent), gen.FieldConnID(conn.ID()), gen.FieldErr(err))
 		return gen.NoSender, err
 	}
 	pid, ok = c.getConnActorPID(conn.ID())
 	if !ok {
-		obs.Inc("gateway.bind_error_total")
 		glog.Error("网关获取连接Actor失败", gen.FieldComponent(gatewayComponent), gen.FieldConnID(conn.ID()), gen.FieldErr(ErrClientAgentNotFound))
 		return gen.NoSender, ErrClientAgentNotFound
 	}
@@ -117,14 +115,13 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 
 	pid, err := c.system.SpawnActor(agent, spawnerOptions)
 	if err != nil {
-		obs.Inc("gateway.spawn_agent_error_total")
+
 		glog.Error("网关启动客户端Actor失败",
 			gen.FieldComponent(gatewayComponent),
 			gen.FieldConnID(conn.ID()),
 			gen.FieldErr(err))
 		return ErrSpawnClientAgent
 	}
-	obs.Inc("gateway.spawn_agent_total")
 	c.manager.Bind(conn.ID(), pid)
 	return nil
 }
@@ -156,6 +153,5 @@ func (c *gatWay) Stop(ctx context.Context) error {
 	for _, pid := range current {
 		_ = c.stopConnActor(pid)
 	}
-	obs.Inc("gateway.stop_total")
 	return nil
 }

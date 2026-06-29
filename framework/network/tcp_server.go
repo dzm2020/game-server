@@ -5,7 +5,7 @@ import (
 	"errors"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
-	"game-server/framework/obs"
+
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"net"
@@ -57,7 +57,6 @@ func (s *TCPServer) accept() {
 		}
 		return
 	}
-	obs.Inc("network.tcp_server_accept_total")
 	s.newTcpCon(conn)
 }
 

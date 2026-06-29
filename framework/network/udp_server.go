@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"game-server/framework/gen"
-	"game-server/framework/obs"
+
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"net"
@@ -38,7 +38,6 @@ const udpServerComponent = "network.udp.server"
 
 func (s *UDPServer) Start() error {
 	if err := s.listen(); err != nil {
-		obs.Inc("network.udp_server_start_error_total")
 		return err
 	}
 
@@ -49,7 +48,6 @@ func (s *UDPServer) Start() error {
 		s.writeLoop()
 	})
 
-	obs.Inc("network.udp_server_start_total")
 	glog.Info("UDP服务器监听", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()))
 	return nil
 
@@ -83,12 +81,12 @@ func (s *UDPServer) readLoop() {
 		n, remoteAddr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
 			if !errors.Is(err, net.ErrClosed) {
-				obs.Inc("network.udp_server_read_error_total")
+
 				glog.Error("UDP服务器读取数据包异常", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 			}
 			continue
 		}
-		obs.Inc("network.udp_server_read_packet_total")
+
 		if n == 0 {
 			continue
 		}
@@ -97,7 +95,7 @@ func (s *UDPServer) readLoop() {
 
 		remoteAddrCopy := convertor.DeepClone(remoteAddr)
 		if remoteAddrCopy == nil {
-			obs.Inc("network.udp_server_clone_error_total")
+
 			glog.Error("UDP DeepClone失败", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), zap.String("remoteAddr", remoteAddr.String()))
 			continue
 		}
@@ -123,12 +121,12 @@ func (s *UDPServer) writeLoop() {
 			_, err := s.conn.WriteToUDP(packet.data, packet.remoteAddr)
 			if err != nil {
 				if !errors.Is(err, net.ErrClosed) {
-					obs.Inc("network.udp_server_write_error_total")
+
 					glog.Error("UDP服务器写入失败", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 				}
 				continue
 			}
-			obs.Inc("network.udp_server_write_total")
+
 		}
 	}
 }

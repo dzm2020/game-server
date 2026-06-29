@@ -3,7 +3,7 @@ package network
 import (
 	"errors"
 	"game-server/framework/gen"
-	"game-server/framework/obs"
+
 	"game-server/framework/pkg/glog"
 	"time"
 
@@ -83,17 +83,16 @@ func (c *WebSocketConnection) Close(err error) (w error) {
 
 	timeout := time.Now().Add(1 * time.Second)
 	if err := c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), timeout); err != nil && !errors.Is(err, websocket.ErrCloseSent) {
-		obs.Inc("network.websocket_close_error_total")
+
 		glog.Error("WebSocket WriteControl 关闭帧失败", gen.FieldComponent("network.websocket"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	}
 	if err := c.conn.Close(); err != nil {
-		obs.Inc("network.websocket_close_error_total")
+
 		glog.Error("WebSocket conn.Close 失败", gen.FieldComponent("network.websocket"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	}
 
 	c.baseConn.Close(c, err)
 
-	obs.Inc("network.websocket_close_total")
 	glog.Info("WebSocket连接断开", gen.FieldComponent("network.websocket"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }

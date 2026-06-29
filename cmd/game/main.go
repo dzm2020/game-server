@@ -1,7 +1,7 @@
 package main
 
 import (
-	grpc_cluster "game-server/framework/cluster/grpc"
+	"game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
 	"game-server/framework/node"
 	"game-server/framework/pkg/glog"
@@ -19,9 +19,9 @@ func main() {
 		Logger:     logger,
 		Behavior:   gamesvr.Behavior{},
 	})
-	if err := n.SetCluster(grpc_cluster.NewWithOptions(n, grpc_cluster.Options{
+	if err := n.SetCluster(grpc.NewWithOptions(n, grpc.Options{
 		Remotes: []string{"chat"},
-		Client: grpc_cluster.ClientOptions{
+		Client: grpc.ClientOptions{
 			SendChanSize: 1000,
 		},
 	})); err != nil {
