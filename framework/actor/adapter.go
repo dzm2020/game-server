@@ -14,6 +14,4 @@ func (h messageActorAdapter) OnMessage(ctx gen.IContext) error {
 	}
 	return nil
 }
-func (h messageActorAdapter) OnError(gen.IContext, any) {
-	return
-}
+func (h messageActorAdapter) OnError(gen.IContext, any) {}

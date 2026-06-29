@@ -61,13 +61,11 @@ func (m *mailbox) run() {
 		return actor.OnDestroy(m.context)
 	})
 	for m.running {
-		select {
-		case env := <-m.ch:
-			m.context.current = env
-			m.invokeWithPanicCallback(actor, func() error {
-				return m.onMessage(m.context, env)
-			})
-		}
+		env := <-m.ch
+		m.context.current = env
+		m.invokeWithPanicCallback(actor, func() error {
+			return m.onMessage(m.context, env)
+		})
 	}
 }
 
