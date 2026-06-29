@@ -2,19 +2,14 @@ package actor
 
 import (
 	"game-server/framework/gen"
-	"game-server/framework/grs"
 	"game-server/framework/pkg/stopper"
-	"sync"
 )
-
-const actorProcessComponent = "actor.process"
 
 type process struct {
 	stopper.Stopper
-	system   *System
-	ctx      *actorContext
-	mailbox  *mailbox
-	stopOnce sync.Once
+	system  *System
+	ctx     *actorContext
+	mailbox *mailbox
 }
 
 func (c *process) getPID() *gen.PID {
@@ -26,23 +21,17 @@ func (c *process) getName() string {
 }
 
 func (c *process) push(env gen.ActorEnvelope) error {
-	if c.IsStop() {
-		return gen.ErrActorProcessStopped
-	}
 	return c.mailbox.push(env)
 }
 
 func (c *process) stop() {
-	if !c.Stopper.Stop() {
+	ok := c.system.removeProcess(c)
+	if !ok {
 		return
 	}
 	stopEnv := gen.ActorEnvelope{
 		Payload: &stopEnvelopeMessage{},
 		Sender:  gen.NoSender,
 	}
-	c.system.removeProcess(c)
-	// 邮箱满时异步重试，保证终止消息最终入队。
-	grs.SafeGo(func() {
-		c.mailbox.safePush(stopEnv)
-	})
+	c.mailbox.pushStopMessage(stopEnv)
 }

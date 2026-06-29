@@ -64,7 +64,7 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 		actor:      handler,
 		askTimeout: time.Second * 3,
 		route:      opts.Route,
-		logger:     glog.GetLogger().With(gen.FieldComponent(actorProcessComponent), zap.String("pid", pid.String())),
+		logger:     glog.GetLogger().With(gen.FieldComponent("actor"), zap.String("pid", pid.String())),
 	}
 
 	proc := &process{
@@ -92,24 +92,19 @@ func (s *System) addProcess(proc *process) error {
 	return nil
 }
 
-func (s *System) removeProcess(proc *process) {
+func (s *System) removeProcess(proc *process) bool {
 	if proc == nil {
-		return
+		return false
 	}
-	s.processDict.Delete(proc.getPID().ActorID)
+	_, ok := s.processDict.GetAndDelete(proc.getPID().ActorID)
 	s.nameDict.Delete(proc.getName())
+	return ok
 }
 
 func (s *System) getProcess(target any) (*process, bool) {
 	switch v := target.(type) {
 	case *gen.PID:
-		if v.ActorID != 0 {
-			return s.processDict.Get(v.ActorID)
-		}
-		if v.ActorName != "" {
-			return s.nameDict.Get(v.ActorName)
-		}
-		return nil, false
+		return s.getProcessByPid(v)
 	case string:
 		return s.nameDict.Get(v)
 	default:
@@ -117,11 +112,27 @@ func (s *System) getProcess(target any) (*process, bool) {
 	}
 }
 
+func (s *System) getProcessByPid(pid *gen.PID) (*process, bool) {
+	if pid == nil {
+		return nil, false
+	}
+	if pid.GetNodeID() != s.node.GetId() {
+		return nil, false
+	}
+	if pid.ActorID != 0 {
+		return s.processDict.Get(pid.ActorID)
+	}
+	if pid.ActorName != "" {
+		return s.nameDict.Get(pid.ActorName)
+	}
+	return nil, false
+}
+
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
-	if to, ok := target.(*gen.PID); ok && to.NodeID != s.node.GetId() {
-		if s.Status() == component.LifecycleStateStopped {
-			return gen.ErrActorSystemClosed
-		}
+	if target == nil {
+		return gen.ErrActorPidNil
+	}
+	if to, _ := target.(*gen.PID); to != nil && to.NodeID != s.node.GetId() {
 		return s.remoteTell(from, to, msg)
 	}
 	return s.localTell(from, target, msg)
@@ -135,6 +146,9 @@ func (s *System) localTell(from *gen.PID, target any, msg *gen.Message) error {
 }
 
 func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error {
+	if s.Status() != component.LifecycleStateStarted {
+		return gen.ErrComponentNotStart
+	}
 	cluster := s.node.GetCluster()
 	if cluster == nil {
 		return gen.ErrClusterNil
@@ -145,6 +159,13 @@ func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error 
 func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = gen.DefaultActorAskTimeout
+	}
+	if target == nil {
+		return nil, gen.ErrActorPidNil
+	}
+	//  不提供给远程调用
+	if to, _ := target.(*gen.PID); to != nil && to.NodeID != s.node.GetId() {
+		return nil, gen.ErrActorNoAskClusterProvided
 	}
 	reply := newAskReply()
 	err := s.SendEnvelope(target, gen.ActorEnvelope{
@@ -163,16 +184,17 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 }
 
 func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
-	if s.Status() != component.LifecycleStateStarted {
-		return gen.ErrComponentNotStart
-	}
+
 	return s.SendEnvelope(target, gen.ActorEnvelope{
 		Sender:  from,
 		Payload: task,
 	})
 }
 
-func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
+func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) error {
+	if s.Status() != component.LifecycleStateStarted {
+		return gen.ErrComponentNotStart
+	}
 	proc, err := s.getActiveProcess(target)
 	if err != nil {
 		return err
@@ -181,6 +203,9 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 }
 
 func (s *System) getActiveProcess(target any) (*process, error) {
+	if target == nil {
+		return nil, gen.ErrActorPidNil
+	}
 	proc, ok := s.getProcess(target)
 	if !ok {
 		return nil, gen.ErrActorNotFound

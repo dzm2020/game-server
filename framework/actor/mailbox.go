@@ -2,13 +2,15 @@ package actor
 
 import (
 	"game-server/framework/gen"
+	"sync"
 )
 
 type stopEnvelopeMessage struct{}
 
 func newMailbox(chSize int, ctx *actorContext) *mailbox {
 	return &mailbox{
-		ch:      make(chan gen.ActorEnvelope, chSize),
+		// 预留 1 个槽位给 stop 消息，确保停止信号可异步入队。
+		ch:      make(chan gen.ActorEnvelope, chSize+1),
 		context: ctx,
 		running: true,
 	}
@@ -18,21 +20,36 @@ type mailbox struct {
 	ch      chan gen.ActorEnvelope
 	context *actorContext
 	running bool
+
+	mu       sync.Mutex
+	closed   bool
+	stopOnce sync.Once
 }
 
 func (m *mailbox) push(env gen.ActorEnvelope) error {
-	select {
-	case m.ch <- env:
-		return nil
-	default:
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return gen.ErrActorProcessStopped
+	}
+
+	// 保留最后 1 个槽位给 stop 消息。
+	if len(m.ch) >= cap(m.ch)-1 {
 		return gen.ErrActorMailboxFull
 	}
+	m.ch <- env
+	return nil
 }
 
-func (m *mailbox) safePush(stopEnv gen.ActorEnvelope) {
-	select {
-	case m.ch <- stopEnv:
-	}
+func (m *mailbox) pushStopMessage(stopEnv gen.ActorEnvelope) {
+	m.stopOnce.Do(func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+
+		m.closed = true
+		m.ch <- stopEnv
+	})
 }
 
 func (m *mailbox) run() {
