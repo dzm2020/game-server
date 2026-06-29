@@ -11,6 +11,7 @@ import (
 	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/registry"
+	"game-server/framework/registry/consul"
 	"reflect"
 
 	"os"
@@ -76,7 +77,7 @@ func (n *Node) init(options gen.NodeOptions) {
 
 	glog.Init(options.Logger, logOptions...)
 
-	compRegistry := registry.NewComponent(n)
+	compRegistry := consul.New(n)
 
 	compCluster := options.Cluster
 	if compCluster == nil {

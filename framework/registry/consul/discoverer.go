@@ -13,29 +13,29 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/duke-git/lancet/v2/maputil"
 	"github.com/hashicorp/consul/api"
 	"go.uber.org/zap"
 )
 
 // Discoverer wraps discovery-side capabilities.
 type Discoverer struct {
-	client      *api.Client
-	cacheMu     sync.RWMutex
-	cache       map[string][]ServiceInstance
-	instanceMap map[string]ServiceInstance // instanceMap 以服务实例ID为索引，便于按ID快速查询实例信息。
-	names       []string
-	watchMu     sync.Mutex
-	watching    bool
-	waitTime    time.Duration
-	runCancel   context.CancelFunc
-	runSeq      uint64
-	mainGroup   *grs.Group
-	workerGroup *grs.Group
-	notifyGroup *grs.Group
-	workers     map[string]context.CancelFunc
-	subMu       sync.RWMutex
-	watchers    map[string]map[string]gen.ServiceChangeHandler
-	watchSeq    uint64
+	client *api.Client
+
+	nameMu sync.RWMutex
+	names  []string
+
+	waitTime  time.Duration
+	mainGroup *grs.Group
+	watchSeq  atomic.Uint64
+	logger    *zap.Logger
+
+	cache       *maputil.ConcurrentMap[string, []ServiceInstance]
+	instanceMap *maputil.ConcurrentMap[string, ServiceInstance] // instanceMap 以服务实例ID为索引，便于按ID快速查询实例信息。
+	workers     *maputil.ConcurrentMap[string, context.CancelFunc]
+
+	subMu    sync.RWMutex
+	watchers map[string]map[string]gen.ServiceChangeHandler
 }
 
 // newDiscoverer
@@ -44,130 +44,16 @@ type Discoverer struct {
 //	@param client
 //	@param logger
 //	@return *Discoverer
-func newDiscoverer(client *api.Client) *Discoverer {
+func newDiscoverer(client *api.Client, logger *zap.Logger) *Discoverer {
 	return &Discoverer{
 		client:      client,
-		cache:       make(map[string][]ServiceInstance),
-		instanceMap: make(map[string]ServiceInstance),
 		waitTime:    30 * time.Second,
-		mainGroup:   grs.NewGroup(),
-		workerGroup: grs.NewGroup(),
-		notifyGroup: grs.NewGroup(),
-		workers:     make(map[string]context.CancelFunc),
+		logger:      logger,
+		cache:       maputil.NewConcurrentMap[string, []ServiceInstance](10),
+		instanceMap: maputil.NewConcurrentMap[string, ServiceInstance](10),
+		workers:     maputil.NewConcurrentMap[string, context.CancelFunc](10),
 		watchers:    make(map[string]map[string]gen.ServiceChangeHandler),
 	}
-}
-
-// Discover returns service instances from Consul health API.
-func (d *Discoverer) Discover(serviceName string) []ServiceInstance {
-	if serviceName == "" {
-		return nil
-	}
-	instances, _ := d.getCache(serviceName)
-	return instances
-}
-
-// queryServiceEntries
-//
-//	@Description: 从Consul拉取指定服务的健康实例条目
-//	@receiver d
-//	@param serviceName
-//	@param q
-//	@return []*api.ServiceEntry
-//	@return *api.QueryMeta
-//	@return error
-func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions) ([]*api.ServiceEntry, *api.QueryMeta, error) {
-	if serviceName == "" {
-		return nil, nil, nil
-	}
-	entries, meta, err := d.client.Health().Service(serviceName, "", true, q)
-	if err != nil {
-		// 关闭或超时取消，视为正常结束
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, nil, err
-		}
-		glog.Error("Consul拉取指定服务的健康实例条目", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
-		return nil, nil, err
-	}
-	glog.Debug("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Int("count", len(entries)))
-	return entries, meta, nil
-}
-
-// ListServices returns all registered service names.
-func (d *Discoverer) ListServices() []string {
-	d.cacheMu.RLock()
-	defer d.cacheMu.RUnlock()
-	names := make([]string, len(d.names))
-	copy(names, d.names)
-	return names
-}
-
-// DiscoverAll returns discovered instances grouped by service name.
-func (d *Discoverer) DiscoverAll() map[string][]ServiceInstance {
-	names := d.ListServices()
-	all := make(map[string][]ServiceInstance, len(names))
-	for _, name := range names {
-		instances := d.Discover(name)
-		all[name] = instances
-	}
-	return all
-}
-
-func (d *Discoverer) GetInstance(serverID string) (ServiceInstance, bool) {
-	d.cacheMu.RLock()
-	defer d.cacheMu.RUnlock()
-
-	instances, ok := d.instanceMap[serverID]
-	return instances, ok
-}
-
-// Watch
-//
-//	@Description: 监控服务
-//	@receiver d
-//	@param serviceName
-//	@param onChange
-//	@return string
-//	@return error
-func (d *Discoverer) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
-	if serviceName == "" {
-		return "", nil
-	}
-	if onChange == nil {
-		return "", nil
-	}
-
-	watchID := strconv.FormatUint(atomic.AddUint64(&d.watchSeq, 1), 10)
-	d.subMu.Lock()
-	if d.watchers[serviceName] == nil {
-		d.watchers[serviceName] = make(map[string]gen.ServiceChangeHandler)
-	}
-	d.watchers[serviceName][watchID] = onChange
-	d.subMu.Unlock()
-	glog.Info("监控服务", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
-	return watchID, nil
-}
-
-// Unwatch
-//
-//	@Description: 移除服务监控
-//	@receiver d
-//	@param serviceName
-//	@param watchID
-func (d *Discoverer) Unwatch(serviceName, watchID string) {
-	if serviceName == "" || watchID == "" {
-		return
-	}
-	d.subMu.Lock()
-	watches, ok := d.watchers[serviceName]
-	if ok {
-		delete(watches, watchID)
-		if len(watches) == 0 {
-			delete(d.watchers, serviceName)
-		}
-	}
-	d.subMu.Unlock()
-	glog.Info("移除服务监控", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
 }
 
 // Start
@@ -180,74 +66,19 @@ func (d *Discoverer) Start(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	d.watchMu.Lock()
-	if d.watching {
-		d.watchMu.Unlock()
-		return nil
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	d.runSeq++
-	seq := d.runSeq
-	d.runCancel = cancel
-	d.watching = true
-	d.watchMu.Unlock()
-
-	d.mainGroup.Go(func() {
-		glog.Info("运行服务发现协程", zap.Duration("wait", 30*time.Second))
-		defer func() {
-			d.watchMu.Lock()
-			if d.runSeq == seq {
-				d.runCancel = nil
-				d.watching = false
-			}
-			d.watchMu.Unlock()
-			glog.Info("服务发现协程终止")
-		}()
-		if err := d.SyncBlocking(runCtx); err != nil {
-			glog.Error("运行服务发现协程", glog.Component("registry.consul.discoverer"), glog.Err(err))
+	d.mainGroup = grs.NewGroup(ctx)
+	d.mainGroup.Go(func(ctx context.Context) {
+		d.logger.Info("运行服务发现协程", zap.Duration("wait", 30*time.Second))
+		if err := d.watchServices(ctx); err != nil {
+			glog.Error("运行服务发现协程", glog.Err(err))
 		}
+		d.logger.Info("运行服务发现协程终止", zap.Duration("wait", 30*time.Second))
 	})
 	return nil
 }
 
-func (d *Discoverer) Stop(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	d.watchMu.Lock()
-	d.runSeq++
-	cancel := d.runCancel
-	d.runCancel = nil
-	d.watching = false
-	workerCancels := make([]context.CancelFunc, 0, len(d.workers))
-	for name, workerCancel := range d.workers {
-		workerCancels = append(workerCancels, workerCancel)
-		delete(d.workers, name)
-	}
-	d.watchMu.Unlock()
-
-	if cancel != nil {
-		cancel()
-	}
-	for _, workerCancel := range workerCancels {
-		workerCancel()
-	}
-
-	if err := d.mainGroup.Wait(ctx); err != nil {
-		return err
-	}
-	if err := d.workerGroup.Wait(ctx); err != nil {
-		return err
-	}
-	if err := d.notifyGroup.Wait(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
 // SyncBlocking blocks and long-polls all services, then refreshes local cache.
-func (d *Discoverer) SyncBlocking(ctx context.Context) error {
+func (d *Discoverer) watchServices(ctx context.Context) error {
 	waitTime := 30 * time.Second
 	var waitIndex uint64
 
@@ -282,134 +113,63 @@ func (d *Discoverer) SyncBlocking(ctx context.Context) error {
 			names = append(names, name)
 		}
 
-		glog.Debug("服务列表", zap.Strings("services", names))
-
-		d.setServiceNames(names)
-		d.reconcileServiceWorkers(ctx, names, waitTime)
+		d.logger.Debug("服务列表", zap.Strings("services", names))
+		d.nameMu.Lock()
+		d.names = names
+		d.nameMu.Unlock()
+		//
+		d.runServiceWorkers(ctx, names, waitTime)
 	}
 }
 
-// getCache
-//
-//	@Description: 从本地缓存读取指定服务实例，并返回副本
-//	@receiver d
-//	@param serviceName
-//	@return []ServiceInstance
-//	@return bool
-func (d *Discoverer) getCache(serviceName string) ([]ServiceInstance, bool) {
-	d.cacheMu.RLock()
-	key := serviceName
-	instances, ok := d.cache[key]
-	d.cacheMu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	return cloneInstances(instances), true
-}
-
-// setServiceCache
-//
-//	@Description: 更新服务缓存，并在发生变更时触发监听回调
-//	@receiver d
-//	@param serviceName
-//	@param passing
-func (d *Discoverer) setServiceCache(serviceName string, passing []ServiceInstance) {
-	var previous []ServiceInstance
-	var hadPrevious bool
-	d.cacheMu.Lock()
-	previous, hadPrevious = d.cache[serviceName]
-	d.cache[serviceName] = cloneInstances(passing)
-	d.rebuildInstanceMapLocked()
-	d.cacheMu.Unlock()
-
-	added, updated, removed, changed := diffInstances(previous, passing)
-	topology := &gen.Topology{
-		All:     passing,
-		Added:   added,
-		Updated: updated,
-		Removed: removed,
-	}
-	if !hadPrevious || changed {
-		d.notifyWatchers(serviceName, topology)
-	}
-}
-
-// removeServiceCache
-//
-//	@Description: 删除指定服务缓存，并在有历史数据时触发移除通知
-//	@receiver d
-//	@param serviceName
-func (d *Discoverer) removeServiceCache(serviceName string) {
-	var previous []ServiceInstance
-	var hadPrevious bool
-	d.cacheMu.Lock()
-	previous, hadPrevious = d.cache[serviceName]
-	delete(d.cache, serviceName)
-	d.rebuildInstanceMapLocked()
-	d.cacheMu.Unlock()
-	if hadPrevious && len(previous) > 0 {
-		topology := &gen.Topology{
-			All:     nil,
-			Added:   nil,
-			Updated: nil,
-			Removed: previous,
-		}
-		d.notifyWatchers(serviceName, topology)
-	}
-}
-
-// setServiceNames
-//
-//	@Description: 更新当前服务名列表快照
-//	@receiver d
-//	@param names
-func (d *Discoverer) setServiceNames(names []string) {
-	d.cacheMu.Lock()
-	d.names = make([]string, len(names))
-	copy(d.names, names)
-	d.cacheMu.Unlock()
-}
-
-// reconcileServiceWorkers
+// runServiceWorkers
 //
 //	@Description: 按最新服务名列表增减对应的同步 worker
 //	@receiver d
 //	@param ctx
 //	@param names
 //	@param waitTime
-func (d *Discoverer) reconcileServiceWorkers(ctx context.Context, names []string, waitTime time.Duration) {
+func (d *Discoverer) runServiceWorkers(ctx context.Context, names []string, waitTime time.Duration) {
 	next := make(map[string]struct{}, len(names))
 	for _, name := range names {
 		next[name] = struct{}{}
 	}
-
+	//  查找需要停止的worker
 	toStop := make(map[string]context.CancelFunc)
-
-	d.watchMu.Lock()
-	for name, cancel := range d.workers {
+	d.workers.Range(func(name string, cancel context.CancelFunc) bool {
+		if cancel == nil {
+			return true
+		}
 		if _, ok := next[name]; !ok {
 			toStop[name] = cancel
-			delete(d.workers, name)
 		}
-	}
-	for _, name := range names {
-		if _, ok := d.workers[name]; !ok {
-			svcName := name
-			serviceCtx, cancel := context.WithCancel(ctx)
-			d.workers[svcName] = cancel
-			d.workerGroup.Go(func() {
-				glog.Info("启动服务实例发现协程", zap.String("service_name", svcName))
-				d.serviceSyncLoop(serviceCtx, svcName, waitTime)
-				glog.Info("结束服务实例发现协程", zap.String("service_name", svcName))
-			})
-		}
-	}
-	d.watchMu.Unlock()
-
+		return true
+	})
+	//  停止worker
 	for name, cancel := range toStop {
+		d.workers.Delete(name)
 		cancel()
 		d.removeServiceCache(name)
 	}
+	//  启动新worker
+	for _, name := range names {
+		if _, ok := d.workers.Get(name); ok {
+			continue
+		}
+		d.workers.Set(name, nil)
+		d.runWorker(name, waitTime)
+	}
+
+}
+func (d *Discoverer) runWorker(svcName string, waitTime time.Duration) {
+	d.mainGroup.Go(func(ctx context.Context) {
+		d.logger.Info("启动服务实例发现协程", zap.String("service_name", svcName))
+
+		serviceCtx, cancel := context.WithCancel(ctx)
+		d.workers.Set(svcName, cancel)
+		d.serviceSyncLoop(serviceCtx, svcName, waitTime)
+		d.logger.Info("结束服务实例发现协程", zap.String("service_name", svcName))
+	})
 }
 
 // serviceSyncLoop
@@ -436,10 +196,10 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 		entries, meta, err := d.queryServiceEntries(serviceName, query.WithContext(ctx))
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				glog.Info("服务发现同步已停止", zap.String("service_name", serviceName))
+				d.logger.Info("服务发现同步已停止", zap.String("service_name", serviceName))
 				return
 			}
-			glog.Error("服务实例发现", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
+			d.logger.Error("服务实例发现", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
 			select {
 			case <-ctx.Done():
 				return
@@ -453,6 +213,196 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 
 		passing := instancesFromEntries(entries)
 		d.setServiceCache(serviceName, passing)
+	}
+}
+
+// Discover returns service instances from Consul health API.
+func (d *Discoverer) Discover(serviceName string) []ServiceInstance {
+	if serviceName == "" {
+		return nil
+	}
+	instances, _ := d.getCache(serviceName)
+	return instances
+}
+
+// queryServiceEntries
+//
+//	@Description: 从Consul拉取指定服务的健康实例条目
+//	@receiver d
+//	@param serviceName
+//	@param q
+//	@return []*api.ServiceEntry
+//	@return *api.QueryMeta
+//	@return error
+func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions) ([]*api.ServiceEntry, *api.QueryMeta, error) {
+	if serviceName == "" {
+		return nil, nil, nil
+	}
+	entries, meta, err := d.client.Health().Service(serviceName, "", true, q)
+	if err != nil {
+		// 关闭或超时取消，视为正常结束
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, nil, err
+		}
+		d.logger.Error("Consul拉取指定服务的健康实例条目", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
+		return nil, nil, err
+	}
+	d.logger.Debug("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Int("count", len(entries)))
+	return entries, meta, nil
+}
+
+// ListServices returns all registered service names.
+func (d *Discoverer) ListServices() []string {
+	d.nameMu.RLock()
+	names := make([]string, len(d.names))
+	copy(names, d.names)
+	d.nameMu.RUnlock()
+	return names
+}
+
+// DiscoverAll returns discovered instances grouped by service name.
+func (d *Discoverer) DiscoverAll() map[string][]ServiceInstance {
+	names := d.ListServices()
+	all := make(map[string][]ServiceInstance, len(names))
+	for _, name := range names {
+		instances := d.Discover(name)
+		all[name] = instances
+	}
+	return all
+}
+
+func (d *Discoverer) GetInstance(serverID string) (ServiceInstance, bool) {
+	instances, ok := d.instanceMap.Get(serverID)
+	return instances, ok
+}
+
+// Watch
+//
+//	@Description: 监控服务
+//	@receiver d
+//	@param serviceName
+//	@param onChange
+//	@return string
+//	@return error
+func (d *Discoverer) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
+	if serviceName == "" {
+		return "", nil
+	}
+	if onChange == nil {
+		return "", nil
+	}
+
+	watchID := strconv.FormatUint(d.watchSeq.Add(1), 10)
+	d.subMu.Lock()
+	if d.watchers[serviceName] == nil {
+		d.watchers[serviceName] = make(map[string]gen.ServiceChangeHandler)
+	}
+	d.watchers[serviceName][watchID] = onChange
+	d.subMu.Unlock()
+	d.logger.Info("监控服务", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
+	return watchID, nil
+}
+
+// Unwatch
+//
+//	@Description: 移除服务监控
+//	@receiver d
+//	@param serviceName
+//	@param watchID
+func (d *Discoverer) Unwatch(serviceName, watchID string) {
+	if serviceName == "" || watchID == "" {
+		return
+	}
+	d.subMu.Lock()
+	watches, ok := d.watchers[serviceName]
+	if ok {
+		delete(watches, watchID)
+		if len(watches) == 0 {
+			delete(d.watchers, serviceName)
+		}
+	}
+	d.subMu.Unlock()
+	d.logger.Info("移除服务监控", zap.String("service_name", serviceName), zap.String("watch_id", watchID))
+}
+
+func (d *Discoverer) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	if d.mainGroup != nil {
+		d.mainGroup.Cancel()
+		if err := d.mainGroup.Wait(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// getCache
+//
+//	@Description: 从本地缓存读取指定服务实例，并返回副本
+//	@receiver d
+//	@param serviceName
+//	@return []ServiceInstance
+//	@return bool
+func (d *Discoverer) getCache(serviceName string) ([]ServiceInstance, bool) {
+	instances, ok := d.cache.Get(serviceName)
+	if !ok {
+		return nil, false
+	}
+	return cloneInstances(instances), true
+}
+
+// setServiceCache
+//
+//	@Description: 更新服务缓存，并在发生变更时触发监听回调
+//	@receiver d
+//	@param serviceName
+//	@param passing
+func (d *Discoverer) setServiceCache(serviceName string, passing []ServiceInstance) {
+	var previous []ServiceInstance
+	var hadPrevious bool
+
+	previous, hadPrevious = d.cache.Get(serviceName)
+	d.cache.Set(serviceName, cloneInstances(passing))
+	d.rebuildInstanceMapLocked()
+
+	added, updated, removed, changed := diffInstances(previous, passing)
+	topology := &gen.Topology{
+		All:     passing,
+		Added:   added,
+		Updated: updated,
+		Removed: removed,
+	}
+	if !hadPrevious || changed {
+		d.notifyWatchers(serviceName, topology)
+	}
+}
+
+// removeServiceCache
+//
+//	@Description: 删除指定服务缓存，并在有历史数据时触发移除通知
+//	@receiver d
+//	@param serviceName
+func (d *Discoverer) removeServiceCache(serviceName string) {
+	var previous []ServiceInstance
+	var hadPrevious bool
+
+	previous, hadPrevious = d.cache.Get(serviceName)
+	d.cache.Delete(serviceName)
+
+	d.rebuildInstanceMapLocked()
+
+	if hadPrevious && len(previous) > 0 {
+		topology := &gen.Topology{
+			All:     nil,
+			Added:   nil,
+			Updated: nil,
+			Removed: previous,
+		}
+		d.notifyWatchers(serviceName, topology)
 	}
 }
 
@@ -478,8 +428,8 @@ func (d *Discoverer) notifyWatchers(serviceName string, topology *gen.Topology) 
 	}
 	d.subMu.RUnlock()
 
-	d.notifyGroup.Go(func() {
-		glog.Debug("触发服务的变更监听回调", zap.String("service_name", serviceName))
+	grs.SafeGo(func() {
+		d.logger.Debug("触发服务的变更监听回调", zap.String("service_name", serviceName))
 		for _, callback := range callbacks {
 			callback(topology)
 		}
@@ -554,16 +504,17 @@ func cloneInstances(instances []ServiceInstance) []ServiceInstance {
 }
 
 func (d *Discoverer) rebuildInstanceMapLocked() {
-	next := make(map[string]ServiceInstance)
-	for _, instances := range d.cache {
+	instanceMap := maputil.NewConcurrentMap[string, ServiceInstance](10)
+	d.cache.Range(func(_ string, instances []ServiceInstance) bool {
 		for _, ins := range instances {
 			if ins.ID == "" {
 				continue
 			}
-			next[ins.ID] = ins
+			instanceMap.Set(ins.ID, ins)
 		}
-	}
-	d.instanceMap = next
+		return true
+	})
+	d.instanceMap = instanceMap
 }
 
 // instancesFromEntries

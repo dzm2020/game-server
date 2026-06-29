@@ -6,7 +6,6 @@ import (
 	"game-server/framework/grs"
 	"game-server/framework/pkg/component"
 
-	"game-server/framework/pkg/stopper"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -27,21 +26,13 @@ var _ gen.ISystem = (*System)(nil)
 var _ component.IComponent = (*System)(nil)
 
 type System struct {
-	stopper.Stopper
+	component.BaseComponent
 	node        gen.INode
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
 	nextID      atomic.Uint64
 	lifecycleMu sync.Mutex
 	waitGroup   *grs.Group
-}
-
-func (s *System) Init(ctx context.Context) error {
-	return nil
-}
-
-func (s *System) Start(ctx context.Context) error {
-	return nil
 }
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
@@ -55,7 +46,7 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 
-	if s.IsStop() {
+	if s.Status() == component.LifecycleStateStopped {
 		return gen.NoSender, gen.ErrActorSystemClosed
 	}
 
@@ -125,7 +116,7 @@ func (s *System) getProcess(target any) (*process, bool) {
 
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
 	if to, ok := target.(*gen.PID); ok && to.NodeID != s.node.GetId() {
-		if s.IsStop() {
+		if s.Status() == component.LifecycleStateStopped {
 			return gen.ErrActorSystemClosed
 		}
 		return s.remoteTell(from, to, msg)
@@ -188,7 +179,7 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 }
 
 func (s *System) getActiveProcess(target any) (*process, error) {
-	if s.IsStop() {
+	if s.Status() == component.LifecycleStateStopped {
 		return nil, gen.ErrActorSystemClosed
 	}
 	proc, ok := s.getProcess(target)
@@ -207,7 +198,7 @@ func (s *System) StopProcess(target any) {
 }
 
 func (s *System) Stop(ctx context.Context) error {
-	if !s.Stopper.Stop() {
+	if err := s.BaseComponent.Stop(ctx); err != nil {
 		return nil
 	}
 	if ctx == nil {

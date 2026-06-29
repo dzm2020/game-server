@@ -2,11 +2,11 @@ package grpc_cluster
 
 import (
 	"context"
+	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
-	"slices"
 
 	"time"
 
@@ -33,6 +33,7 @@ type Cluster struct {
 	node gen.INode
 
 	clusterNames []string
+	clusterSet   map[string]struct{}
 
 	clientSendChanSize int
 	clients            *maputil.ConcurrentMap[string, *Client]
@@ -69,6 +70,13 @@ func (c *Cluster) Init(ctx context.Context) error {
 	opts := c.node.GetOptions()
 	c.clientSendChanSize = opts.Grpc.ClientSendChanSize
 	c.clusterNames = opts.Clusters
+	c.clusterSet = make(map[string]struct{}, len(c.clusterNames))
+	for _, name := range c.clusterNames {
+		if name == "" {
+			continue
+		}
+		c.clusterSet[name] = struct{}{}
+	}
 	c.server = NewNodeServer(opts.RpcAddress, c)
 	c.logger.Info("初始化成功",
 		zap.Strings("clusterNames", c.clusterNames),
@@ -78,12 +86,13 @@ func (c *Cluster) Init(ctx context.Context) error {
 }
 
 func (c *Cluster) Start(ctx context.Context) error {
-	if err := c.BaseComponent.Start(ctx); err != nil {
-		return err
+	if c.Status() != component.LifecycleStateInited {
+		return c.BaseComponent.Start(ctx)
 	}
 	c.logger.Info("开始启动")
 	c.bgGroup = grs.NewGroup(ctx)
 	if err := c.server.run(); err != nil {
+		c.bgGroup = nil
 		return err
 	}
 
@@ -92,6 +101,14 @@ func (c *Cluster) Start(ctx context.Context) error {
 	c.bgGroup.Go(func(ctx context.Context) {
 		c.connectPeers(ctx)
 	})
+
+	if err := c.BaseComponent.Start(ctx); err != nil {
+		cleanupErr := c.shutdownRuntime(context.Background())
+		if cleanupErr != nil {
+			return fmt.Errorf("%w: cleanup failed: %v", err, cleanupErr)
+		}
+		return err
+	}
 
 	c.logger.Info("启动完成")
 	return nil
@@ -120,7 +137,8 @@ func (c *Cluster) getClient(nodeId string) *Client {
 }
 
 func (c *Cluster) shouldConnectService(serviceName string) bool {
-	return slices.Contains(c.clusterNames, serviceName)
+	_, ok := c.clusterSet[serviceName]
+	return ok
 }
 
 func (c *Cluster) selfNodeID() string {
@@ -152,14 +170,19 @@ func (c *Cluster) connectAll() {
 		return
 	}
 	list := discovery.DiscoverAll()
+	activeNodeIDs := make(map[string]struct{})
 	for name, instances := range list {
 		if !c.shouldConnectService(name) {
 			continue
 		}
 		for _, instance := range instances {
+			if nodeID := instance.GetID(); nodeID != "" && nodeID != c.selfNodeID() {
+				activeNodeIDs[nodeID] = struct{}{}
+			}
 			c.reconcilePeer(instance)
 		}
 	}
+	//c.cleanupStaleClients(activeNodeIDs)
 }
 
 func (c *Cluster) reconcilePeer(ins gen.ServiceInstance) {
@@ -208,8 +231,20 @@ func (c *Cluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 }
 
 func (c *Cluster) resolveSendClient(to *gen.PID) (*Client, error) {
+	if to == nil {
+		return nil, gen.ErrActorPidNil
+	}
+	if c.node == nil {
+		return nil, gen.ErrNodeIsNil
+	}
 	discovery := c.node.GetRegistry()
+	if discovery == nil {
+		return nil, gen.ErrRegistryNil
+	}
 	nodeID := to.GetNodeID()
+	if nodeID == "" {
+		return nil, gen.ErrClusterNodeNotFound
+	}
 	client := c.getClient(nodeID)
 	if client == nil {
 		return nil, gen.ErrClusterNodeNotFound
@@ -273,7 +308,13 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 	if msg.TargetPid == nil || msg.SourcePid == nil {
 		return gen.ErrActorPidNil
 	}
+	if c.node == nil {
+		return gen.ErrNodeIsNil
+	}
 	system := c.node.GetSystem()
+	if system == nil {
+		return gen.ErrActorSystemNil
+	}
 	m, _, err := gen.Decode(msg.Data)
 	if err != nil {
 		return err
@@ -287,8 +328,8 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 		return err
 	}
 	c.logger.Debug("分发消息",
-		zap.String("from", msg.SourcePid.String()),
-		zap.String("to", msg.TargetPid.String()),
+		zap.String("from", pidString(msg.SourcePid)),
+		zap.String("to", pidString(msg.TargetPid)),
 	)
 	return nil
 }
@@ -298,24 +339,68 @@ func (c *Cluster) Stop(ctx context.Context) error {
 	if err := c.BaseComponent.Stop(ctx); err != nil {
 		return err
 	}
+	if err := c.shutdownRuntime(ctx); err != nil {
+		return err
+	}
+	c.logger.Info("集群已关闭")
+	return nil
+}
+
+func (c *Cluster) shutdownRuntime(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-
 	if c.server != nil {
 		c.server.shutdown()
 	}
-
+	c.closeAllClients()
 	if c.bgGroup != nil {
 		c.bgGroup.Cancel()
 		if err := c.bgGroup.Wait(ctx); err != nil {
 			c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
 			return err
 		}
+		c.bgGroup = nil
 	}
-
-	c.logger.Info("集群已关闭")
 	return nil
+}
+
+func (c *Cluster) closeAllClients() {
+	var clients []*Client
+	c.rangeClient(func(client *Client) bool {
+		if client == nil {
+			return true
+		}
+		clients = append(clients, client)
+		return true
+	})
+	for _, client := range clients {
+		client.Close()
+	}
+}
+
+func (c *Cluster) cleanupStaleClients(active map[string]struct{}) {
+	var staleClients []*Client
+	c.rangeClient(func(client *Client) bool {
+		if client == nil {
+			return true
+		}
+		if _, ok := active[client.getNodeId()]; ok {
+			return true
+		}
+		staleClients = append(staleClients, client)
+		return true
+	})
+	for _, client := range staleClients {
+		client.Close()
+	}
+}
+
+func pidString(pid *gen.PID) string {
+	if pid == nil {
+		return ""
+	}
+	return pid.String()
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {
