@@ -165,5 +165,4 @@ func (s *UDPServer) Shutdown(ctx context.Context) {
 	s.baseServer.Shutdown(ctx)
 
 	glog.Debug("UDP服务器已关闭", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()))
-	return
 }

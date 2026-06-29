@@ -87,7 +87,5 @@ func (c *UDPConnection) Close(err error) (w error) {
 		c.udpConnMgr.RemoveUDP(c.connKey)
 	}
 	c.baseConn.Close(c, err)
-
-	glog.Info("UDP连接断开", gen.FieldComponent("network.udp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }

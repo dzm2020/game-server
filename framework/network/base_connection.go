@@ -33,11 +33,6 @@ func newBaseConn(common connCommon, network string, conn net.Conn, remoteAddr ne
 	}
 	bc.lastActive.Store(time.Now().Unix())
 	bc.ctx, bc.cancel = context.WithCancel(common.ctx)
-
-	glog.Info("新建网络连接", gen.FieldComponent("network.connection"), gen.FieldConnID(bc.ID()),
-		zap.String("network", bc.Network()),
-		zap.String("localAddr", bc.LocalAddr()),
-		zap.String("remoteAddr", bc.RemoteAddr()))
 	return bc
 }
 
@@ -148,5 +143,4 @@ func (b *baseConn) Close(connection IConnection, err error) {
 		b.connMgr.Remove(connection)
 	}
 	b.cancel()
-	return
 }

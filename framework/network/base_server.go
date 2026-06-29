@@ -3,8 +3,12 @@ package network
 import (
 	"context"
 	"fmt"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
+	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/stopper"
+
+	"go.uber.org/zap"
 )
 
 func newBaseServer(network, address string, handler IHandler, options ServerOptions) *baseServer {
@@ -54,6 +58,11 @@ func (s *baseServer) Shutdown(ctx context.Context) {
 	if s.runGroup == nil {
 		return
 	}
-	_ = s.runGroup.Wait(ctx)
-	return
+	if err := s.runGroup.Wait(ctx); err != nil {
+		glog.Warn("等待网络服务协程退出超时",
+			gen.FieldComponent("network.server"),
+			zap.String("addr", s.Addr()),
+			gen.FieldErr(err),
+		)
+	}
 }

@@ -101,8 +101,8 @@ func (c *TCPConnection) writeLoop() {
 
 func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 	totalBytes := 0
-	loop := true
-	for totalBytes < maxBatchWriteBytes && loop {
+collectLoop:
+	for totalBytes < maxBatchWriteBytes {
 		totalBytes += len(msg)
 		if _, err := c.writeBuffer.Write(msg); err != nil {
 			return err
@@ -115,15 +115,13 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 		select {
 		case msg, ok = <-c.sendChan:
 			if !ok {
-				loop = false
-				break
+				break collectLoop
 			}
 			if msg == nil {
 				continue
 			}
 		default:
-			loop = false
-			break
+			break collectLoop
 		}
 	}
 	for c.writeBuffer.Len() > 0 {
@@ -172,8 +170,6 @@ func (c *TCPConnection) Close(err error) (w error) {
 	}
 
 	c.baseConn.Close(c, err)
-
-	glog.Info("TCP连接断开", gen.FieldComponent("network.tcp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }
 

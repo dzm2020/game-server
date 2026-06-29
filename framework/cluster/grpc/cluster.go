@@ -165,12 +165,12 @@ func (c *Cluster) connectAll() {
 			continue
 		}
 		for _, instance := range instances {
-			c.reconcilePeer(instance)
+			c.reconcileClient(instance)
 		}
 	}
 }
 
-func (c *Cluster) reconcilePeer(instance gen.ServiceInstance) {
+func (c *Cluster) reconcileClient(instance gen.ServiceInstance) {
 	nodeID := instance.GetID()
 	if nodeID == "" || nodeID == c.selfNodeID() {
 		return

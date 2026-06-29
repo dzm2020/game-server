@@ -239,6 +239,7 @@ func (p *client) IsConnected() bool {
 // Close 关闭节点连接
 func (p *client) Close() {
 	p.closeOnce.Do(func() {
+		p.cluster.removeClient(p)
 		if p.cancelFunc != nil {
 			p.cancelFunc()
 		}
@@ -257,7 +258,6 @@ func (p *client) Close() {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		p.cluster.removeClient(p)
 		p.logger.Info("客户端关闭")
 	})
 }

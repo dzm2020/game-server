@@ -105,5 +105,4 @@ func (s *WebSocketServer) Shutdown(ctx context.Context) {
 	s.baseServer.Shutdown(ctx)
 
 	glog.Info("WebSocket服务器关闭", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
-	return
 }

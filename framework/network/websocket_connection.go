@@ -92,7 +92,5 @@ func (c *WebSocketConnection) Close(err error) (w error) {
 	}
 
 	c.baseConn.Close(c, err)
-
-	glog.Info("WebSocket连接断开", gen.FieldComponent("network.websocket"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }

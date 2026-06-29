@@ -75,12 +75,10 @@ func (s *TCPServer) newTcpCon(conn net.Conn) {
 
 	s.runGroup.Go(func(ctx context.Context) {
 		connection.readLoop()
-		glog.Info("TCP连接读协程关闭", gen.FieldComponent(tcpServerComponent), gen.FieldConnID(connection.ID()))
 	})
 
 	s.runGroup.Go(func(ctx context.Context) {
 		connection.writeLoop()
-		glog.Info("TCP连接写协程关闭", gen.FieldComponent(tcpServerComponent), gen.FieldConnID(connection.ID()))
 	})
 
 	s.runGroup.Go(func(ctx context.Context) {
@@ -97,5 +95,4 @@ func (s *TCPServer) Shutdown(ctx context.Context) {
 	}
 	s.baseServer.Shutdown(ctx)
 	glog.Info("TCP服务器关闭", gen.FieldComponent(tcpServerComponent), zap.String("address", s.Addr()))
-	return
 }

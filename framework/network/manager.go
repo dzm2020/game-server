@@ -56,6 +56,10 @@ func (m *ConnManager) ConnectionCount() int64 {
 }
 
 func (m *ConnManager) GetAll() []IConnection {
+	return m.snapshotConnections()
+}
+
+func (m *ConnManager) snapshotConnections() []IConnection {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	conns := make([]IConnection, 0, len(m.connections))
@@ -68,9 +72,7 @@ func (m *ConnManager) GetAll() []IConnection {
 }
 
 func (m *ConnManager) Range(fn func(conn IConnection) bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	for _, conn := range m.connections {
+	for _, conn := range m.snapshotConnections() {
 		if !fn(conn) {
 			break
 		}
