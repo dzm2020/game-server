@@ -1,6 +1,9 @@
 package gen
 
-import "context"
+import (
+	"context"
+	"game-server/framework/pkg/component"
+)
 
 type Topology struct {
 	All     []ServiceInstance
@@ -51,20 +54,9 @@ const (
 // - Shutdown：仅用于“服务端入口”级别优雅退出，语义等同 Stop。
 // - Close：仅用于“单个资源句柄”关闭，调用后资源不可继续使用。
 type IRegistry interface {
+	component.IComponent
 	IDiscovery
 	IRegistrar
-
-	// Start 启动服务注册/发现后台任务。
-	// 幂等：重复调用不得重复启动，已启动时应返回 nil。
-	// 阻塞：可短暂阻塞到后台任务初始化完成，不得长期阻塞。
-	// 返回：后台任务进入运行态返回 nil；初始化失败或已不可启动时返回 error。
-	Start(ctx context.Context) error
-
-	// Stop 优雅停止服务注册/发现后台任务。
-	// 幂等：可重复调用，仅第一次执行真实停止流程；后续调用返回与首次一致的结果。
-	// 阻塞：阻塞直到后台任务退出完成，或 ctx.Done。
-	// 返回：完全停止返回 nil；若被 ctx 取消/超时或停止过程失败，返回 error。
-	Stop(ctx context.Context) error
 }
 
 type IRegistrar interface {

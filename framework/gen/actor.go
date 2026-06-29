@@ -42,7 +42,7 @@ type IActor interface {
 	OnInit(IContext) error
 	OnDestroy(IContext) error
 	OnMessage(IContext) error
-	OnError(IContext, any) error
+	OnError(IContext, any)
 }
 
 type IContext interface {
@@ -50,7 +50,6 @@ type IContext interface {
 	Sender() *PID
 	InitArgs() []any
 	System() ISystem
-	Done() <-chan struct{}
 	Ticker(interval time.Duration, task ActorTask) (stop func())
 	AfterFunc(delay time.Duration, task ActorTask) (stop func())
 	Tell(target any, msg *Message) error
@@ -71,7 +70,7 @@ func (h *BaseActor) OnDestroy(IContext) error { return nil }
 
 func (h *BaseActor) OnMessage(ctx IContext) error { return nil }
 
-func (h *BaseActor) OnError(IContext, any) error { return nil }
+func (h *BaseActor) OnError(IContext, any) { return }
 
 type SpawnOptions struct {
 	Name        string

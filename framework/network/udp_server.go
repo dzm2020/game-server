@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"game-server/framework/gen"
 	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
@@ -49,7 +50,7 @@ func (s *UDPServer) Start() error {
 	})
 
 	obs.Inc("network.udp_server_start_total")
-	glog.Info("UDP服务器监听", glog.Component(udpServerComponent), zap.String("address", s.Addr()))
+	glog.Info("UDP服务器监听", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()))
 	return nil
 
 }
@@ -68,7 +69,7 @@ func (s *UDPServer) listen() (err error) {
 	udpConn, ok := ln.(*net.UDPConn)
 	if !ok {
 		if closeErr := ln.Close(); closeErr != nil {
-			glog.Error("关闭 PacketConn 时出错", glog.Component(udpServerComponent), glog.Err(closeErr))
+			glog.Error("关闭 PacketConn 时出错", gen.FieldComponent(udpServerComponent), gen.FieldErr(closeErr))
 		}
 		return fmt.Errorf("failed to convert PacketConn to UDPConn")
 	}
@@ -83,7 +84,7 @@ func (s *UDPServer) readLoop() {
 		if err != nil {
 			if !errors.Is(err, net.ErrClosed) {
 				obs.Inc("network.udp_server_read_error_total")
-				glog.Error("UDP服务器读取数据包异常", glog.Component(udpServerComponent), zap.String("address", s.Addr()), glog.Err(err))
+				glog.Error("UDP服务器读取数据包异常", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 			}
 			continue
 		}
@@ -97,7 +98,7 @@ func (s *UDPServer) readLoop() {
 		remoteAddrCopy := convertor.DeepClone(remoteAddr)
 		if remoteAddrCopy == nil {
 			obs.Inc("network.udp_server_clone_error_total")
-			glog.Error("UDP DeepClone失败", glog.Component(udpServerComponent), zap.String("address", s.Addr()), zap.String("remoteAddr", remoteAddr.String()))
+			glog.Error("UDP DeepClone失败", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), zap.String("remoteAddr", remoteAddr.String()))
 			continue
 		}
 
@@ -123,7 +124,7 @@ func (s *UDPServer) writeLoop() {
 			if err != nil {
 				if !errors.Is(err, net.ErrClosed) {
 					obs.Inc("network.udp_server_write_error_total")
-					glog.Error("UDP服务器写入失败", glog.Component(udpServerComponent), zap.String("address", s.Addr()), glog.Err(err))
+					glog.Error("UDP服务器写入失败", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 				}
 				continue
 			}
@@ -161,10 +162,10 @@ func (s *UDPServer) Shutdown(ctx context.Context) {
 		return
 	}
 	if err := s.conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		glog.Error("关闭 UDP 连接时出错", glog.Component(udpServerComponent), zap.String("address", s.Addr()), glog.Err(err))
+		glog.Error("关闭 UDP 连接时出错", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 	}
 	s.baseServer.Shutdown(ctx)
 
-	glog.Debug("UDP服务器已关闭", glog.Component(udpServerComponent), zap.String("address", s.Addr()))
+	glog.Debug("UDP服务器已关闭", gen.FieldComponent(udpServerComponent), zap.String("address", s.Addr()))
 	return
 }

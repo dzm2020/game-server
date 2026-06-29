@@ -62,7 +62,7 @@ func (c *TCPConnection) readLoop() {
 			}
 			if !errors.Is(err, net.ErrClosed) {
 				obs.Inc("network.tcp_read_error_total")
-				glog.Error("TCP连接读取错误", glog.Component("network.tcp"), glog.ConnID(c.ID()), glog.Err(err))
+				glog.Error("TCP连接读取错误", gen.FieldComponent("network.tcp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 			}
 			return
 		}
@@ -139,8 +139,8 @@ func (c *TCPConnection) batchWriteMsg(msg []byte) error {
 			if errors.As(err, &netErr) && netErr.Timeout() {
 				obs.Inc("network.tcp_write_timeout_total")
 				glog.Warn("TCP写入超时",
-					glog.Component("network.tcp"),
-					glog.ConnID(c.ID()),
+					gen.FieldComponent("network.tcp"),
+					gen.FieldConnID(c.ID()),
 					zap.Int("pendingWriteBytes", c.writeBuffer.Len()),
 					zap.Int("sendQueueLen", len(c.sendChan)),
 					zap.Int("sendQueueCap", cap(c.sendChan)),
@@ -175,7 +175,7 @@ func (c *TCPConnection) Close(err error) (w error) {
 	c.baseConn.Close(c, err)
 
 	obs.Inc("network.tcp_close_total")
-	glog.Info("TCP连接断开", glog.Component("network.tcp"), glog.ConnID(c.ID()), glog.Err(err))
+	glog.Info("TCP连接断开", gen.FieldComponent("network.tcp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }
 

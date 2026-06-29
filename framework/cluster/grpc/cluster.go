@@ -62,7 +62,7 @@ func (c *Cluster) Init(ctx context.Context) error {
 		if err := c.validateDependencies(); err != nil {
 			return err
 		}
-		c.logger = glog.GetLogger().With(glog.Component(clusterComponent), glog.NodeID(c.selfNodeID()))
+		c.logger = glog.GetLogger().With(gen.FieldComponent(clusterComponent), gen.FieldNodeID(c.selfNodeID()))
 
 		opts := c.node.GetOptions()
 		c.clientSendChanSize = opts.Grpc.ClientSendChanSize
@@ -254,11 +254,11 @@ func (c *Cluster) resolveSendClient(to *gen.PID) (*Client, error) {
 //	@return error  部分失败仍返回 nil
 func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
 	if to == nil {
-		c.logger.Error("集群广播", glog.Err(gen.ErrActorPidNil))
+		c.logger.Error("集群广播", gen.FieldErr(gen.ErrActorPidNil))
 		return gen.ErrActorPidNil
 	}
 	if msg == nil {
-		c.logger.Error("集群广播", glog.Err(gen.ErrMessageNil))
+		c.logger.Error("集群广播", gen.FieldErr(gen.ErrMessageNil))
 		return gen.ErrMessageNil
 	}
 
@@ -268,11 +268,11 @@ func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
 		target.NodeID = client.getNodeId()
 		m, err := NewClusterMessage(gen.NoSender, target, msg)
 		if err != nil {
-			c.logger.Warn("集群广播", zap.String("to", to.String()), glog.Err(err))
+			c.logger.Warn("集群广播", zap.String("to", to.String()), gen.FieldErr(err))
 			return true
 		}
 		if err := client.send(m); err != nil {
-			c.logger.Warn("集群广播", zap.String("to", to.String()), glog.Err(err))
+			c.logger.Warn("集群广播", zap.String("to", to.String()), gen.FieldErr(err))
 			return true
 		}
 		success++
@@ -363,7 +363,7 @@ func (c *Cluster) Stop(ctx context.Context) error {
 		c.closeAllClients()
 		c.bgGroup.Cancel()
 		if err := c.bgGroup.Wait(ctx); err != nil {
-			c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
+			c.logger.Warn("等待集群后台协程退出超时", gen.FieldErr(err))
 			return err
 		}
 		c.logger.Info("集群已关闭")

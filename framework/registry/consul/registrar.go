@@ -4,7 +4,6 @@ import (
 	"context"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
-	"game-server/framework/pkg/glog"
 	"game-server/framework/pkg/netutil"
 	"time"
 
@@ -56,7 +55,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 		return err
 	}
 	if err = rr.client.Agent().ServiceRegister(serviceReg); err != nil {
-		rr.logger.Error("注册失败", zap.String("service_id", reg.ID), glog.Err(err))
+		rr.logger.Error("注册失败", zap.String("service_id", reg.ID), gen.FieldErr(err))
 		return err
 	}
 
@@ -82,7 +81,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 func (rr *Registrar) instanceToRegistration(reg ServiceInstance, options gen.ConsulOptions) (*api.AgentServiceRegistration, error) {
 	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
 	if err != nil {
-		rr.logger.Error("注册失败", zap.String("address", reg.RpcAddress), glog.Err(err))
+		rr.logger.Error("注册失败", zap.String("address", reg.RpcAddress), gen.FieldErr(err))
 		return nil, err
 	}
 	check := &api.AgentServiceCheck{
@@ -117,7 +116,7 @@ func (rr *Registrar) Deregister(serviceID string) error {
 		return gen.ErrConsulServiceIDRequired
 	}
 	if err := rr.client.Agent().ServiceDeregister(serviceID); err != nil {
-		rr.logger.Error("注销失败", zap.String("service_id", serviceID), glog.Err(err))
+		rr.logger.Error("注销失败", zap.String("service_id", serviceID), gen.FieldErr(err))
 		return err
 	}
 	rr.removeServiceKeeper(serviceID)

@@ -51,17 +51,17 @@ func (a *Agent) SetConnection(connection network.IConnection) {
 func (a *Agent) Push(msg interface{}) error {
 	if a == nil || a.connection == nil || msg == nil {
 		glog.Error("网关Actor下行推送参数非法",
-			glog.Component("gateway.agent"),
+			gen.FieldComponent("gateway.agent"),
 			zap.Bool("agent_nil", a == nil),
 			zap.Bool("message_nil", msg == nil),
-			glog.Err(ErrInvalidPushParams))
+			gen.FieldErr(ErrInvalidPushParams))
 		return ErrInvalidPushParams
 	}
 	if a.connection.IsStop() {
 		glog.Error("网关Actor下行推送连接不可用",
-			glog.Component("gateway.agent"),
-			glog.ConnID(a.connection.ID()),
-			glog.Err(ErrConnectionUnavailable))
+			gen.FieldComponent("gateway.agent"),
+			gen.FieldConnID(a.connection.ID()),
+			gen.FieldErr(ErrConnectionUnavailable))
 		return ErrConnectionUnavailable
 	}
 	switch v := msg.(type) {
@@ -83,9 +83,9 @@ func (a *Agent) Push(msg interface{}) error {
 	default:
 
 		glog.Error("网关Actor下行推送消息类型非法",
-			glog.Component("gateway.agent"),
+			gen.FieldComponent("gateway.agent"),
 			zap.String("message_type", fmt.Sprintf("%T", msg)),
-			glog.Err(ErrInvalidMessageType))
+			gen.FieldErr(ErrInvalidMessageType))
 		return ErrInvalidMessageType
 	}
 }

@@ -5,17 +5,19 @@ import (
 	"game-server/framework/grs"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type actorContext struct {
 	self       *gen.PID
 	system     *System
 	initArgs   []any
-	done       <-chan struct{}
 	current    gen.ActorEnvelope
 	actor      gen.IActor
 	askTimeout time.Duration
 	route      gen.IActorRoute
+	logger     *zap.Logger
 }
 
 func noopStop() {}
@@ -39,10 +41,6 @@ func (c *actorContext) System() gen.ISystem {
 	return c.system
 }
 
-func (c *actorContext) Done() <-chan struct{} {
-	return c.done
-}
-
 func (c *actorContext) Ticker(interval time.Duration, task gen.ActorTask) (stop func()) {
 	if interval <= 0 || task == nil {
 		return noopStop
@@ -55,8 +53,6 @@ func (c *actorContext) Ticker(interval time.Duration, task gen.ActorTask) (stop 
 		defer stop()
 		for {
 			select {
-			case <-c.done:
-				return
 			case <-stopCh:
 				return
 			case <-ticker.C:
@@ -88,8 +84,6 @@ func (c *actorContext) AfterFunc(delay time.Duration, task gen.ActorTask) (stop 
 	grs.SafeGo(func() {
 		defer stop()
 		select {
-		case <-c.done:
-			return
 		case <-stopCh:
 			return
 		case <-timer.C:
@@ -147,4 +141,8 @@ func (c *actorContext) GetRouter() gen.IActorRoute {
 
 func (c *actorContext) Exit() {
 	c.system.StopProcess(c.self)
+}
+
+func (c *actorContext) Logger() *zap.Logger {
+	return c.logger
 }

@@ -71,7 +71,7 @@ func (d *Discoverer) Start(ctx context.Context) error {
 	d.mainGroup.Go(func(ctx context.Context) {
 		d.logger.Info("运行服务发现协程", zap.Duration("wait", 30*time.Second))
 		if err := d.watchServices(ctx); err != nil {
-			glog.Error("运行服务发现协程", glog.Err(err))
+			glog.Error("运行服务发现协程", gen.FieldErr(err))
 		}
 		d.logger.Info("运行服务发现协程终止", zap.Duration("wait", 30*time.Second))
 	})
@@ -157,17 +157,16 @@ func (d *Discoverer) runServiceWorkers(ctx context.Context, names []string, wait
 		if _, ok := d.workers.Get(name); ok {
 			continue
 		}
-		d.workers.Set(name, nil)
-		d.runWorker(name, waitTime)
+
+		ctx, cancel := context.WithCancel(d.mainGroup.Context())
+		d.workers.Set(name, cancel)
+		d.runWorker(ctx, name, waitTime)
 	}
 
 }
-func (d *Discoverer) runWorker(svcName string, waitTime time.Duration) {
+func (d *Discoverer) runWorker(serviceCtx context.Context, svcName string, waitTime time.Duration) {
 	d.mainGroup.Go(func(ctx context.Context) {
 		d.logger.Info("启动服务实例发现协程", zap.String("service_name", svcName))
-
-		serviceCtx, cancel := context.WithCancel(ctx)
-		d.workers.Set(svcName, cancel)
 		d.serviceSyncLoop(serviceCtx, svcName, waitTime)
 		d.logger.Info("结束服务实例发现协程", zap.String("service_name", svcName))
 	})
@@ -186,6 +185,7 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 		select {
 		case <-ctx.Done():
 			return
+
 		default:
 		}
 
@@ -200,7 +200,7 @@ func (d *Discoverer) serviceSyncLoop(ctx context.Context, serviceName string, wa
 				d.logger.Info("服务发现同步已停止", zap.String("service_name", serviceName))
 				return
 			}
-			d.logger.Error("服务实例发现", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
+			d.logger.Error("服务实例发现", gen.FieldComponent("registry.consul.discoverer"), zap.String("service_name", serviceName), gen.FieldErr(err))
 			select {
 			case <-ctx.Done():
 				return
@@ -245,7 +245,7 @@ func (d *Discoverer) queryServiceEntries(serviceName string, q *api.QueryOptions
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil, nil, err
 		}
-		d.logger.Error("Consul拉取指定服务的健康实例条目", glog.Component("registry.consul.discoverer"), zap.String("service_name", serviceName), glog.Err(err))
+		d.logger.Error("Consul拉取指定服务的健康实例条目", gen.FieldComponent("registry.consul.discoverer"), zap.String("service_name", serviceName), gen.FieldErr(err))
 		return nil, nil, err
 	}
 	d.logger.Debug("Consul拉取指定服务的健康实例条目", zap.String("service_name", serviceName), zap.Int("count", len(entries)))

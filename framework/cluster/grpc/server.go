@@ -3,6 +3,7 @@ package grpc_cluster
 import (
 	"context"
 	"errors"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"io"
@@ -23,7 +24,7 @@ func NewNodeServer(address string, cluster *Cluster) *NodeServer {
 	return &NodeServer{
 		address: address,
 		cluster: cluster,
-		logger:  glog.GetLogger().With(glog.Component(serverComponent), zap.String("address", address)),
+		logger:  glog.GetLogger().With(gen.FieldComponent(serverComponent), zap.String("address", address)),
 	}
 }
 
@@ -97,14 +98,14 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 		msg, err := stream.Recv()
 		if err != nil {
 			if isServerStreamClosedErr(err) {
-				s.logger.Info("接收Stream退出", glog.Err(err))
+				s.logger.Info("接收Stream退出", gen.FieldErr(err))
 				return nil
 			}
 			return err
 		}
 		grs.Try(func() {
 			if err = s.cluster.Dispatch(msg); err != nil {
-				s.logger.Error("接收Stream", glog.Err(err))
+				s.logger.Error("接收Stream", gen.FieldErr(err))
 			}
 		}, nil)
 	}

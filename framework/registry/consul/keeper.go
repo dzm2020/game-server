@@ -3,7 +3,6 @@ package consul
 import (
 	"context"
 	"game-server/framework/gen"
-	"game-server/framework/pkg/glog"
 	"strings"
 	"sync"
 	"time"
@@ -80,7 +79,7 @@ func (service *serviceKeeper) updateTTL() error {
 		checkID = "service:" + checkID
 	}
 	if err := service.client.Agent().UpdateTTL(checkID, "", state); err != nil {
-		service.logger.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), glog.Err(err))
+		service.logger.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), gen.FieldErr(err))
 		return err
 	}
 	service.logger.Debug("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("status", state))

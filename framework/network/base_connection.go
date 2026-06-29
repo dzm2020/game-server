@@ -34,7 +34,7 @@ func newBaseConn(common connCommon, network string, conn net.Conn, remoteAddr ne
 	bc.lastActive.Store(time.Now().Unix())
 	bc.ctx, bc.cancel = context.WithCancel(common.ctx)
 
-	glog.Info("新建网络连接", glog.Component("network.connection"), glog.ConnID(bc.ID()),
+	glog.Info("新建网络连接", gen.FieldComponent("network.connection"), gen.FieldConnID(bc.ID()),
 		zap.String("network", bc.Network()),
 		zap.String("localAddr", bc.LocalAddr()),
 		zap.String("remoteAddr", bc.RemoteAddr()))
@@ -113,8 +113,8 @@ func (b *baseConn) Send(msg []byte) error {
 	case b.sendChan <- msg:
 	default:
 		glog.Warn("连接发送队列已满",
-			glog.Component("network.connection"),
-			glog.ConnID(b.id),
+			gen.FieldComponent("network.connection"),
+			gen.FieldConnID(b.id),
 			zap.String("network", b.network),
 			zap.Int("queueLen", len(b.sendChan)),
 			zap.Int("queueCap", cap(b.sendChan)))

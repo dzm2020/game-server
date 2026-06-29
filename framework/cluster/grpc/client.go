@@ -41,8 +41,8 @@ func NewClient(cfg ClientConfig) *Client {
 	}
 
 	p.logger = glog.GetLogger().With(
-		glog.Component(clientComponent),
-		glog.NodeID(cfg.nodeID),
+		gen.FieldComponent(clientComponent),
+		gen.FieldNodeID(cfg.nodeID),
 		zap.String("address", cfg.address),
 	)
 
@@ -172,7 +172,7 @@ func (p *Client) sendLoop() {
 			}
 
 			if err := stream.Send(msg); err != nil {
-				p.logger.Error("流发送失败", glog.Err(err))
+				p.logger.Error("流发送失败", gen.FieldErr(err))
 				p.Close()
 				return
 			}
@@ -194,18 +194,18 @@ func (p *Client) recvLoop() {
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
 			if isStreamClosedErr(err) {
-				p.logger.Info("接收流关闭", glog.Err(err))
+				p.logger.Info("接收流关闭", gen.FieldErr(err))
 				p.Close()
 				return
 			}
 
-			p.logger.Error("接收流关闭", glog.Err(err))
+			p.logger.Error("接收流关闭", gen.FieldErr(err))
 			p.Close()
 			return
 
 		}
 		if err = p.cluster.Dispatch(msg); err != nil {
-			p.logger.Error("分发消息失败", glog.Err(err))
+			p.logger.Error("分发消息失败", gen.FieldErr(err))
 		}
 	}
 }
@@ -213,14 +213,14 @@ func (p *Client) recvLoop() {
 func (p *Client) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
 		err := gen.ErrClusterPeerNotConnected
-		p.logger.Error("客户端发送消息", glog.Err(err))
+		p.logger.Error("客户端发送消息", gen.FieldErr(err))
 		return err
 	}
 	select {
 	case p.sendCh <- msg:
 	default:
 		err := gen.ErrClusterSendChannelFull
-		p.logger.Error("客户端发送消息", glog.Err(err))
+		p.logger.Error("客户端发送消息", gen.FieldErr(err))
 		return err
 	}
 	return nil

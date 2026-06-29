@@ -5,11 +5,13 @@ import (
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/component"
+	"game-server/framework/pkg/glog"
 
 	"sync/atomic"
 	"time"
 
 	"github.com/duke-git/lancet/v2/maputil"
+	"go.uber.org/zap"
 )
 
 func NewSystem(node gen.INode) *System {
@@ -30,8 +32,7 @@ type System struct {
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
 	nextID      atomic.Uint64
-
-	waitGroup *grs.Group
+	waitGroup   *grs.Group
 }
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
@@ -56,20 +57,27 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	id := s.nextID.Add(1)
 	pid := gen.NewPID(id, opts.Name, s.node.GetId())
 
+	ctx := &actorContext{
+		self:       pid,
+		system:     s,
+		initArgs:   opts.InitArgs,
+		actor:      handler,
+		askTimeout: time.Second * 3,
+		route:      opts.Route,
+		logger:     glog.GetLogger().With(gen.FieldComponent(actorProcessComponent), zap.String("pid", pid.String())),
+	}
+
 	proc := &process{
-		system:   s,
-		pid:      pid,
-		mailbox:  make(chan gen.ActorEnvelope, opts.MailboxSize),
-		initArgs: append([]any(nil), opts.InitArgs...),
-		route:    opts.Route,
+		system:  s,
+		ctx:     ctx,
+		mailbox: newMailbox(opts.MailboxSize, ctx),
 	}
 
 	if err := s.addProcess(proc); err != nil {
 		return gen.NoSender, err
 	}
-
 	s.waitGroup.Go(func(ctx context.Context) {
-		proc.run(ctx, handler)
+		proc.mailbox.run()
 	})
 	return pid, nil
 }
@@ -169,7 +177,7 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 	if err != nil {
 		return err
 	}
-	return proc.send(env)
+	return proc.push(env)
 }
 
 func (s *System) getActiveProcess(target any) (*process, error) {
@@ -185,13 +193,21 @@ func (s *System) StopProcess(target any) {
 	if !ok {
 		return
 	}
-	proc.requestStop()
+	proc.stop()
 }
 
 func (s *System) Stop(ctx context.Context) error {
 	return s.BaseComponent.GuardStop(ctx, func(ctx context.Context) error {
 		if ctx == nil {
 			ctx = context.Background()
+		}
+		var list []*process
+		s.processDict.Range(func(key uint64, p *process) bool {
+			list = append(list, p)
+			return true
+		})
+		for _, p := range list {
+			p.stop()
 		}
 		s.waitGroup.Cancel()
 		return s.waitGroup.Wait(ctx)

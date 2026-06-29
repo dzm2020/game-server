@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"errors"
+	"game-server/framework/gen"
 	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
 	"net/http"
@@ -53,11 +54,11 @@ func (s *WebSocketServer) Start() error {
 	}
 
 	s.runGroup.Go(func(ctx context.Context) {
-		glog.Info("WebSocket监听", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
+		glog.Info("WebSocket监听", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
 
 		if err := s.listenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 
-			glog.Error("WebSocket监听", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path), glog.Err(err))
+			glog.Error("WebSocket监听", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path), gen.FieldErr(err))
 			return
 		}
 	})
@@ -78,7 +79,7 @@ func (s *WebSocketServer) handleWebSocket(w http.ResponseWriter, r *http.Request
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		obs.Inc("network.websocket_upgrade_error_total")
-		glog.Error("WebSocket升级失败", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), glog.Err(err))
+		glog.Error("WebSocket升级失败", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), gen.FieldErr(err))
 		return
 	}
 
@@ -105,6 +106,6 @@ func (s *WebSocketServer) Shutdown(ctx context.Context) {
 	_ = s.httpServer.Shutdown(ctx)
 	s.baseServer.Shutdown(ctx)
 
-	glog.Info("WebSocket服务器关闭", glog.Component(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
+	glog.Info("WebSocket服务器关闭", gen.FieldComponent(websocketServerComponent), zap.String("addr", s.Addr()), zap.String("path", s.path))
 	return
 }

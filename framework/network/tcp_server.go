@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"errors"
+	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/obs"
 	"game-server/framework/pkg/glog"
@@ -52,7 +53,7 @@ func (s *TCPServer) accept() {
 	conn, err := s.listener.Accept()
 	if err != nil {
 		if !errors.Is(err, net.ErrClosed) {
-			glog.Error("TCP服务器退出ACCEPT协程", glog.Component(tcpServerComponent), zap.String("address", s.Addr()), glog.Err(err))
+			glog.Error("TCP服务器退出ACCEPT协程", gen.FieldComponent(tcpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 		}
 		return
 	}
@@ -63,9 +64,9 @@ func (s *TCPServer) accept() {
 func (s *TCPServer) newTcpCon(conn net.Conn) {
 	tcpCon, ok := conn.(*net.TCPConn)
 	if !ok {
-		glog.Error("连接类型错误，期望 *net.TCPConn", glog.Component(tcpServerComponent), zap.String("address", s.Addr()))
+		glog.Error("连接类型错误，期望 *net.TCPConn", gen.FieldComponent(tcpServerComponent), zap.String("address", s.Addr()))
 		if closeErr := conn.Close(); closeErr != nil {
-			glog.Error("关闭非 TCPConn 时出错", glog.Component(tcpServerComponent), glog.Err(closeErr))
+			glog.Error("关闭非 TCPConn 时出错", gen.FieldComponent(tcpServerComponent), gen.FieldErr(closeErr))
 		}
 		return
 	}
@@ -75,12 +76,12 @@ func (s *TCPServer) newTcpCon(conn net.Conn) {
 
 	s.runGroup.Go(func(ctx context.Context) {
 		connection.readLoop()
-		glog.Info("TCP连接读协程关闭", glog.Component(tcpServerComponent), glog.ConnID(connection.ID()))
+		glog.Info("TCP连接读协程关闭", gen.FieldComponent(tcpServerComponent), gen.FieldConnID(connection.ID()))
 	})
 
 	s.runGroup.Go(func(ctx context.Context) {
 		connection.writeLoop()
-		glog.Info("TCP连接写协程关闭", glog.Component(tcpServerComponent), glog.ConnID(connection.ID()))
+		glog.Info("TCP连接写协程关闭", gen.FieldComponent(tcpServerComponent), gen.FieldConnID(connection.ID()))
 	})
 
 	s.runGroup.Go(func(ctx context.Context) {
@@ -93,9 +94,9 @@ func (s *TCPServer) Shutdown(ctx context.Context) {
 		return
 	}
 	if err := s.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-		glog.Error("关闭 TCP listener 时出错", glog.Component(tcpServerComponent), zap.String("address", s.Addr()), glog.Err(err))
+		glog.Error("关闭 TCP listener 时出错", gen.FieldComponent(tcpServerComponent), zap.String("address", s.Addr()), gen.FieldErr(err))
 	}
 	s.baseServer.Shutdown(ctx)
-	glog.Info("TCP服务器关闭", glog.Component(tcpServerComponent), zap.String("address", s.Addr()))
+	glog.Info("TCP服务器关闭", gen.FieldComponent(tcpServerComponent), zap.String("address", s.Addr()))
 	return
 }

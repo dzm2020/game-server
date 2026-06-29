@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"game-server/framework/actor"
-	"game-server/framework/cluster"
-	grpc_cluster "game-server/framework/cluster/grpc"
+
+	"game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
-	"game-server/framework/obs"
+
 	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
-	"game-server/framework/registry"
+
 	"game-server/framework/registry/consul"
 	"reflect"
 
@@ -69,28 +69,28 @@ func (n *Node) init(options gen.NodeOptions) {
 			},
 		}),
 		zap.Fields(
-			glog.NodeID(options.ID),
-			glog.Component("node"),
+			gen.FieldNodeID(options.ID),
+			gen.FieldComponent("node"),
 			zap.String("node_name", options.Name),
 		),
+	}
+	if n.options.Registry == nil {
+		n.options.Registry = consul.New(n)
+	}
+
+	if n.options.Cluster == nil {
+		n.options.Cluster = grpc_cluster.New(n)
 	}
 
 	glog.Init(options.Logger, logOptions...)
 
-	compRegistry := consul.New(n)
+	system := actor.NewSystem(n)
 
-	compCluster := options.Cluster
-	if compCluster == nil {
-		compCluster = grpc_cluster.New(n)
-	}
+	n.AddComponents(options.Registry, system, options.Cluster)
 
-	compSystem := actor.NewSystem(n)
-
-	n.AddComponents(compRegistry, compSystem, compCluster)
-
-	n.cluster = compCluster
-	n.registry = compRegistry
-	n.system = compSystem
+	n.cluster = options.Cluster
+	n.registry = options.Registry
+	n.system = system
 
 	n.options.Behavior.OnInit(n)
 }
@@ -141,22 +141,22 @@ func (n *Node) Startup() (err error) {
 	})
 
 	glog.Info("节点启动信息",
-		glog.Component("node"),
-		glog.NodeID(n.GetId()),
+		gen.FieldComponent("node"),
+		gen.FieldNodeID(n.GetId()),
 		zap.String("ext_address", n.GetExtAddress()),
 		zap.String("rpc_address", n.GetRpcAddress()),
-		glog.PID(os.Getpid()),
+		gen.FieldPID(os.Getpid()),
 		zap.Int("component_count", len(n.components)),
-		zap.Strings("peer_names", n.options.RemoteNames),
+		zap.Strings("clusters", n.options.Clusters),
 		zap.Strings("components", names),
 	)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
-	glog.Info("节点等待终止信号", glog.Component("node"), glog.NodeID(n.GetId()), zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
+	glog.Info("节点等待终止信号", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
 	sig := <-sigChan
-	glog.Info("节点停止运行", glog.Component("node"), glog.NodeID(n.GetId()), zap.String("signal", sig.String()))
+	glog.Info("节点停止运行", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.String("signal", sig.String()))
 	return n.Stop(context.Background())
 }
 
@@ -164,7 +164,7 @@ func (n *Node) addComponentsToManager() error {
 	n.addOnce.Do(func() {
 		for _, comp := range n.components {
 			if err := n.IManager.AddComponent(comp); err != nil {
-				glog.Error("节点添加组件失败", glog.Component("node"), glog.NodeID(n.GetId()), glog.Err(err), zap.String("typ", reflect.TypeOf(comp).String()))
+				glog.Error("节点添加组件失败", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(err), zap.String("typ", reflect.TypeOf(comp).String()))
 				n.addErr = err
 				return
 			}
@@ -174,7 +174,7 @@ func (n *Node) addComponentsToManager() error {
 }
 
 func (n *Node) Start(ctx context.Context) (err error) {
-	glog.Info("节点启动", glog.Component("node"), glog.NodeID(n.GetId()), zap.Int("component_count", len(n.components)))
+	glog.Info("节点启动", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.Int("component_count", len(n.components)))
 
 	n.options.Behavior.OnBeforeStart(n)
 
@@ -183,34 +183,30 @@ func (n *Node) Start(ctx context.Context) (err error) {
 	}
 
 	if err = n.IManager.Start(ctx); err != nil {
-		obs.Inc("node.start_error_total")
-		glog.Error("节点启动组件失败", glog.Component("node"), glog.NodeID(n.GetId()), glog.Err(err))
+		glog.Error("节点启动组件失败", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(err))
 		return err
 	}
 
 	n.options.Behavior.OnAfterStart(n)
 
-	obs.Inc("node.start_total")
-	glog.Info("节点启动完成", glog.Component("node"), glog.NodeID(n.GetId()))
+	glog.Info("节点启动完成", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()))
 	return nil
 }
 
 // Stop gracefully stops the node and all components.
 func (n *Node) Stop(ctx context.Context) error {
-	glog.Info("节点开始停止", glog.Component("node"), glog.NodeID(n.GetId()))
+	glog.Info("节点开始停止", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()))
 
 	n.options.Behavior.OnBeforeStop(n)
 
 	stopErr := n.IManager.Stop(ctx)
 	if stopErr != nil {
-		obs.Inc("node.stop_error_total")
-		glog.Error("节点组件停止错误", glog.Component("node"), glog.NodeID(n.GetId()), glog.Err(stopErr))
+		glog.Error("节点组件停止错误", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(stopErr))
 	}
 
 	n.options.Behavior.OnAfterStop(n, stopErr)
 
-	obs.Inc("node.stop_total")
-	glog.Info("节点完成停止", glog.Component("node"), glog.NodeID(n.GetId()), glog.Err(stopErr))
+	glog.Info("节点完成停止", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(stopErr))
 	_ = glog.Stop()
 	return stopErr
 }

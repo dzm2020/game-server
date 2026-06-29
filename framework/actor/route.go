@@ -3,9 +3,11 @@ package actor
 import (
 	"fmt"
 	"game-server/framework/gen"
+	"game-server/framework/pkg/glog"
 	"reflect"
-	"sync"
 
+	"github.com/duke-git/lancet/v2/maputil"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -15,32 +17,50 @@ type entry struct {
 }
 
 type Route struct {
-	mu       sync.RWMutex
-	handlers map[uint16]*entry
+	handlers *maputil.ConcurrentMap[uint16, *entry]
 }
 
 func NewRoute() *Route {
 	return &Route{
-		handlers: make(map[uint16]*entry),
+		handlers: maputil.NewConcurrentMap[uint16, *entry](1),
 	}
 }
 
+// Register
+//
+//	@Description: 注册消息
+//	@receiver r
+//	@param cmd
+//	@param act
+//	@param handler
+//	@param request
 func (r *Route) Register(cmd, act uint8, handler gen.ActorRouteHandler, request proto.Message) {
+	if r.Exist(cmd, act) {
+		glog.Warn("Message duplicate registration", zap.Uint8("cmd", cmd), zap.Uint8("act", act))
+		return
+	}
+
 	routeID := gen.CmdAct(cmd, act)
 	var requestType reflect.Type
 	if request != nil {
 		requestType = reflect.TypeOf(request)
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.handlers[routeID] = &entry{
+
+	r.handlers.Set(routeID, &entry{
 		handler: handler,
 		t:       requestType,
-	}
+	})
 }
 
+// Handle
+//
+//	@Description: 执行消息回调
+//	@receiver r
+//	@param ctx
+//	@param msg
+//	@return error
 func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
-	e := r.get(msg.Cmd, msg.Act)
+	e, _ := r.handlers.Get(gen.CmdAct(msg.Cmd, msg.Act))
 	if e == nil {
 		return fmt.Errorf("%w cmd:%d act:%d", gen.ErrActorRouteNotFound, msg.Cmd, msg.Act)
 	}
@@ -59,11 +79,6 @@ func (r *Route) Handle(ctx gen.IContext, msg *gen.Message) error {
 }
 
 func (r *Route) Exist(cmd, act uint8) bool {
-	return r.get(cmd, act) != nil
-}
-
-func (r *Route) get(cmd, act uint8) *entry {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.handlers[gen.CmdAct(cmd, act)]
+	_, ok := r.handlers.Get(gen.CmdAct(cmd, act))
+	return ok
 }

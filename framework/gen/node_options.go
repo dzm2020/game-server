@@ -3,7 +3,6 @@ package gen
 import (
 	"fmt"
 	"game-server/framework/pkg/glog"
-
 	"time"
 )
 
@@ -50,6 +49,7 @@ func NormalizeNodeOptions(opts NodeOptions) NodeOptions {
 	opts.Grpc = NormalizeGrpcOptions(opts.Grpc)
 	opts.Consul = NormalizeConsulOptions(opts.Consul)
 	opts.Logger = NormalizeLoggerOptions(opts.Logger)
+
 	return opts
 }
 

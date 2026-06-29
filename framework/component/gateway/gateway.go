@@ -34,9 +34,9 @@ func (c *gatWay) Init() error {
 	if err != nil {
 		obs.Inc("gateway.server_init_error_total")
 		glog.Error("网关创建网络服务失败",
-			glog.Component(gatewayComponent),
+			gen.FieldComponent(gatewayComponent),
 			zap.String("proto_addr", c.options.ProtoAddr),
-			glog.Err(err))
+			gen.FieldErr(err))
 		return ErrCreateNetworkServer
 	}
 	c.server = server
@@ -57,7 +57,7 @@ func (c *gatWay) Start(_ context.Context) error {
 		return err
 	}
 	obs.Inc("gateway.server_start_total")
-	glog.Info("网关组件启动成功", glog.Component(gatewayComponent), zap.String("listen", c.server.Addr()))
+	glog.Info("网关组件启动成功", gen.FieldComponent(gatewayComponent), zap.String("listen", c.server.Addr()))
 	return nil
 }
 
@@ -86,13 +86,13 @@ func (c *gatWay) ensureClientAgent(conn network.IConnection) (*gen.PID, error) {
 
 	if err := c.bindConnection(conn); err != nil {
 		obs.Inc("gateway.bind_error_total")
-		glog.Error("网关绑定连接失败", glog.Component(gatewayComponent), glog.ConnID(conn.ID()), glog.Err(err))
+		glog.Error("网关绑定连接失败", gen.FieldComponent(gatewayComponent), gen.FieldConnID(conn.ID()), gen.FieldErr(err))
 		return gen.NoSender, err
 	}
 	pid, ok = c.getConnActorPID(conn.ID())
 	if !ok {
 		obs.Inc("gateway.bind_error_total")
-		glog.Error("网关获取连接Actor失败", glog.Component(gatewayComponent), glog.ConnID(conn.ID()), glog.Err(ErrClientAgentNotFound))
+		glog.Error("网关获取连接Actor失败", gen.FieldComponent(gatewayComponent), gen.FieldConnID(conn.ID()), gen.FieldErr(ErrClientAgentNotFound))
 		return gen.NoSender, ErrClientAgentNotFound
 	}
 	return pid, nil
@@ -119,9 +119,9 @@ func (c *gatWay) bindConnection(conn network.IConnection) error {
 	if err != nil {
 		obs.Inc("gateway.spawn_agent_error_total")
 		glog.Error("网关启动客户端Actor失败",
-			glog.Component(gatewayComponent),
-			glog.ConnID(conn.ID()),
-			glog.Err(err))
+			gen.FieldComponent(gatewayComponent),
+			gen.FieldConnID(conn.ID()),
+			gen.FieldErr(err))
 		return ErrSpawnClientAgent
 	}
 	obs.Inc("gateway.spawn_agent_total")

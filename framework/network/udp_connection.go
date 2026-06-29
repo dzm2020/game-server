@@ -76,7 +76,7 @@ func (c *UDPConnection) writeRcvChan(data []byte) {
 	case c.rcvChan <- data:
 	default:
 		obs.Inc("network.udp_read_chan_full_total")
-		glog.Error("UDP读取chan已满", glog.Component("network.udp"), glog.ConnID(c.ID()))
+		glog.Error("UDP读取chan已满", gen.FieldComponent("network.udp"), gen.FieldConnID(c.ID()))
 	}
 }
 
@@ -90,6 +90,6 @@ func (c *UDPConnection) Close(err error) (w error) {
 	c.baseConn.Close(c, err)
 
 	obs.Inc("network.udp_close_total")
-	glog.Info("UDP连接断开", glog.Component("network.udp"), glog.ConnID(c.ID()), glog.Err(err))
+	glog.Info("UDP连接断开", gen.FieldComponent("network.udp"), gen.FieldConnID(c.ID()), gen.FieldErr(err))
 	return
 }
