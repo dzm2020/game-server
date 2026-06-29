@@ -3,6 +3,7 @@ package gen
 import (
 	"context"
 	"fmt"
+	"game-server/framework/pkg/component"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -19,6 +20,7 @@ type ActorEnvelope struct {
 }
 
 type ISystem interface {
+	component.IComponent
 	Spawn(handler ActorHandler, opts SpawnOptions) (*PID, error)
 	SpawnActor(handler IActor, opts SpawnOptions) (*PID, error)
 	Tell(from *PID, target any, msg *Message) error
@@ -63,7 +65,7 @@ func (h *BaseActor) OnDestroy(IContext) error { return nil }
 
 func (h *BaseActor) OnMessage(ctx IContext) error { return nil }
 
-func (h *BaseActor) OnError(IContext, any) { return }
+func (h *BaseActor) OnError(IContext, any) {}
 
 type SpawnOptions struct {
 	Name        string

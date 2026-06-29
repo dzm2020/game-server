@@ -2,6 +2,7 @@ package consul
 
 import (
 	"context"
+	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/pkg/component"
 	"game-server/framework/pkg/glog"
@@ -15,8 +16,13 @@ const registryComponent = "registry.consul"
 type ServiceInstance = gen.ServiceInstance
 
 func New(node gen.INode) *Registry {
+	return NewWithOptions(node, Options{})
+}
+
+func NewWithOptions(node gen.INode, options Options) *Registry {
 	return &Registry{
-		node: node,
+		node:    node,
+		options: options,
 	}
 }
 
@@ -25,7 +31,7 @@ type Registry struct {
 	*Registrar
 	*Discoverer
 	node    gen.INode
-	options gen.ConsulOptions
+	options Options
 	logger  *zap.Logger
 }
 
@@ -34,13 +40,11 @@ func (r *Registry) Init(ctx context.Context) error {
 		//  初始化日志
 		r.logger = glog.GetLogger().With(zap.String("component", registryComponent))
 
-		//  初始化options
-		options := r.node.GetOptions().Consul
-		r.options = normalization(options)
-		if err := validate(r.options); err != nil {
-			return err
+		r.options = NormalizeOptions(r.options)
+		if err := ValidateOptions(r.options); err != nil {
+			return fmt.Errorf("invalid consul options: %w", err)
 		}
-		config := toConsulConfig(options)
+		config := toConsulConfig(r.options)
 
 		//  创建客户端
 		client, err := api.NewClient(config)
@@ -51,9 +55,9 @@ func (r *Registry) Init(ctx context.Context) error {
 		r.Discoverer = newDiscoverer(client, r.logger)
 
 		r.logger.Info("初始化完成",
-			zap.String("address", options.Address),
-			zap.Duration("ttl", options.TTL),
-			zap.Duration("deregisterAfter", options.DeregisterAfter))
+			zap.String("address", r.options.Address),
+			zap.Duration("ttl", r.options.TTL),
+			zap.Duration("deregisterAfter", r.options.DeregisterAfter))
 
 		return nil
 	})

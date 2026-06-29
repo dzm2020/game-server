@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"game-server/framework/actor"
 
-	"game-server/framework/cluster/grpc"
+	grpc_cluster "game-server/framework/cluster/grpc"
 	"game-server/framework/gen"
 
 	"game-server/framework/pkg/component"
@@ -47,12 +47,10 @@ type Node struct {
 	options gen.NodeOptions
 	component.IManager
 	components []component.IComponent
+	cluster    gen.ICluster
+	system     gen.ISystem
+	registry   gen.IRegistry
 	addOnce    sync.Once
-	addErr     error
-
-	cluster  gen.ICluster
-	system   gen.ISystem
-	registry gen.IRegistry
 }
 
 func (n *Node) init(options gen.NodeOptions) {
@@ -74,23 +72,12 @@ func (n *Node) init(options gen.NodeOptions) {
 			zap.String("node_name", options.Name),
 		),
 	}
-	if n.options.Registry == nil {
-		n.options.Registry = consul.New(n)
-	}
-
-	if n.options.Cluster == nil {
-		n.options.Cluster = grpc_cluster.New(n)
-	}
 
 	glog.Init(options.Logger, logOptions...)
 
-	system := actor.NewSystem(n)
-
-	n.AddComponents(options.Registry, system, options.Cluster)
-
-	n.cluster = options.Cluster
-	n.registry = options.Registry
-	n.system = system
+	n.registry = consul.New(n)
+	n.cluster = grpc_cluster.New(n)
+	n.system = actor.NewSystem(n)
 
 	n.options.Behavior.OnInit(n)
 }
@@ -131,7 +118,34 @@ func (n *Node) AddComponents(comps ...component.IComponent) {
 	n.components = append(n.components, comps...)
 }
 
+func (n *Node) SetRegistry(registry gen.IRegistry) error {
+	if registry == nil {
+		return gen.ErrRegistryNil
+	}
+	old := n.registry
+	if old != nil && old.Status() == component.StateStarted {
+		return component.ErrCannotRegisterComponentAfterStarted
+	}
+	n.registry = registry
+	return nil
+}
+
+func (n *Node) SetCluster(cluster gen.ICluster) error {
+	if cluster == nil {
+		return gen.ErrClusterNil
+	}
+	old := n.cluster
+	if old != nil && old.Status() == component.StateStarted {
+		return component.ErrCannotRegisterComponentAfterStarted
+	}
+	n.cluster = cluster
+	return nil
+}
+
 func (n *Node) Startup() (err error) {
+
+	n.AddComponents(n.registry, n.system, n.cluster)
+
 	if err = n.Start(context.Background()); err != nil {
 		return err
 	}
@@ -141,40 +155,39 @@ func (n *Node) Startup() (err error) {
 	})
 
 	glog.Info("节点启动信息",
-		gen.FieldComponent("node"),
-		gen.FieldNodeID(n.GetId()),
 		zap.String("ext_address", n.GetExtAddress()),
 		zap.String("rpc_address", n.GetRpcAddress()),
 		gen.FieldPID(os.Getpid()),
 		zap.Int("component_count", len(n.components)),
-		zap.Strings("clusters", n.options.Clusters),
 		zap.Strings("components", names),
 	)
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
 	defer signal.Stop(sigChan)
-	glog.Info("节点等待终止信号", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
+	glog.Info("节点等待终止信号", zap.Strings("signals", []string{"SIGINT", "SIGQUIT", "SIGTERM"}))
 	sig := <-sigChan
-	glog.Info("节点停止运行", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.String("signal", sig.String()))
+	glog.Info("节点停止运行", zap.String("signal", sig.String()))
 	return n.Stop(context.Background())
 }
 
 func (n *Node) addComponentsToManager() error {
+	var addErr error
 	n.addOnce.Do(func() {
-		for _, comp := range n.components {
+		components := append([]component.IComponent(nil), n.components...)
+		for _, comp := range components {
 			if err := n.IManager.AddComponent(comp); err != nil {
-				glog.Error("节点添加组件失败", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(err), zap.String("typ", reflect.TypeOf(comp).String()))
-				n.addErr = err
+				glog.Error("节点添加组件失败", gen.FieldErr(err), zap.String("typ", reflect.TypeOf(comp).String()))
+				addErr = err
 				return
 			}
 		}
 	})
-	return n.addErr
+	return addErr
 }
 
 func (n *Node) Start(ctx context.Context) (err error) {
-	glog.Info("节点启动", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), zap.Int("component_count", len(n.components)))
+	glog.Info("节点启动", zap.Int("component_count", len(n.components)))
 
 	n.options.Behavior.OnBeforeStart(n)
 
@@ -183,30 +196,30 @@ func (n *Node) Start(ctx context.Context) (err error) {
 	}
 
 	if err = n.IManager.Start(ctx); err != nil {
-		glog.Error("节点启动组件失败", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(err))
+		glog.Error("节点启动组件失败", gen.FieldErr(err))
 		return err
 	}
 
 	n.options.Behavior.OnAfterStart(n)
 
-	glog.Info("节点启动完成", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()))
+	glog.Info("节点启动完成")
 	return nil
 }
 
 // Stop gracefully stops the node and all components.
 func (n *Node) Stop(ctx context.Context) error {
-	glog.Info("节点开始停止", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()))
+	glog.Info("节点开始停止")
 
 	n.options.Behavior.OnBeforeStop(n)
 
 	stopErr := n.IManager.Stop(ctx)
 	if stopErr != nil {
-		glog.Error("节点组件停止错误", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(stopErr))
+		glog.Error("节点组件停止错误", gen.FieldErr(stopErr))
 	}
 
 	n.options.Behavior.OnAfterStop(n, stopErr)
 
-	glog.Info("节点完成停止", gen.FieldComponent("node"), gen.FieldNodeID(n.GetId()), gen.FieldErr(stopErr))
+	glog.Info("节点完成停止", gen.FieldErr(stopErr))
 	_ = glog.Stop()
 	return stopErr
 }

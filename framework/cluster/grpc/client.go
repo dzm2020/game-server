@@ -1,38 +1,34 @@
-package grpc_cluster
+package grpc
 
 import (
 	"context"
-	"errors"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
-	"io"
 	"sync"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/status"
 )
 
 const clientComponent = "cluster.grpc.client"
 
-// ClientConfig 节点配置
-type ClientConfig struct {
+// clientConfig 节点配置
+type clientConfig struct {
 	nodeID   string
 	address  string
 	sendSize int
 	cluster  *Cluster
 }
 
-// NewClient 创建节点连接
-func NewClient(cfg ClientConfig) *Client {
-	p := &Client{
+// newClient 创建节点连接
+func newClient(cfg clientConfig) *client {
+	p := &client{
 		nodeID:   cfg.nodeID,
 		address:  cfg.address,
 		sendCh:   make(chan *gen.ClusterMessage, cfg.sendSize),
@@ -47,11 +43,11 @@ func NewClient(cfg ClientConfig) *Client {
 	)
 
 	p.ctx, p.cancelFunc = context.WithCancel(p.runGroup.Context())
-	p.logger.Info("初始换客户端")
+	p.logger.Info("初始化客户端")
 	return p
 }
 
-type Client struct {
+type client struct {
 	mu sync.RWMutex
 
 	nodeID  string
@@ -72,10 +68,7 @@ type Client struct {
 	cancelFunc context.CancelFunc
 }
 
-func (p *Client) getNodeId() string {
-	return p.nodeID
-}
-func (p *Client) start() {
+func (p *client) start() {
 	p.runGroup.Go(func(context.Context) {
 		if err := p.connect(); err != nil {
 			p.Close()
@@ -83,12 +76,11 @@ func (p *Client) start() {
 		}
 		p.startIOLoops()
 		p.logger.Info("客户端连接成功")
-		return
 	})
 }
 
 // connect 建立连接
-func (p *Client) connect() error {
+func (p *client) connect() error {
 	conn, err := grpc.NewClient(p.address,
 		// 生产环境建议替换为 TLS 凭证（credentials.NewTLS），
 		// 当前使用明文凭证适用于内网可信环境。
@@ -140,7 +132,7 @@ func (p *Client) connect() error {
 	return nil
 }
 
-func (p *Client) startIOLoops() {
+func (p *client) startIOLoops() {
 	p.runGroup.Go(func(_ context.Context) {
 		p.logger.Info("客户端写协程启动")
 		p.sendLoop()
@@ -155,7 +147,7 @@ func (p *Client) startIOLoops() {
 }
 
 // sendLoop 发送循环
-func (p *Client) sendLoop() {
+func (p *client) sendLoop() {
 	for {
 		select {
 		case <-p.ctx.Done():
@@ -181,7 +173,7 @@ func (p *Client) sendLoop() {
 }
 
 // recvLoop 接收循环
-func (p *Client) recvLoop() {
+func (p *client) recvLoop() {
 	for {
 		stream := p.currentStream()
 
@@ -193,7 +185,7 @@ func (p *Client) recvLoop() {
 		msg, err := stream.Recv()
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
-			if isStreamClosedErr(err) {
+			if isServerStreamClosedErr(err) {
 				p.logger.Info("接收流关闭", gen.FieldErr(err))
 				p.Close()
 				return
@@ -210,7 +202,7 @@ func (p *Client) recvLoop() {
 	}
 }
 
-func (p *Client) send(msg *gen.ClusterMessage) error {
+func (p *client) send(msg *gen.ClusterMessage) error {
 	if !p.IsConnected() {
 		err := gen.ErrClusterPeerNotConnected
 		p.logger.Error("客户端发送消息", gen.FieldErr(err))
@@ -226,18 +218,14 @@ func (p *Client) send(msg *gen.ClusterMessage) error {
 	return nil
 }
 
-func (p *Client) currentStream() NodeService_StreamClient {
+func (p *client) currentStream() NodeService_StreamClient {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.stream
 }
 
-func isStreamClosedErr(err error) bool {
-	return err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
-}
-
 // IsConnected 检查连接状态
-func (p *Client) IsConnected() bool {
+func (p *client) IsConnected() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -249,7 +237,7 @@ func (p *Client) IsConnected() bool {
 }
 
 // Close 关闭节点连接
-func (p *Client) Close() {
+func (p *client) Close() {
 	p.closeOnce.Do(func() {
 		if p.cancelFunc != nil {
 			p.cancelFunc()

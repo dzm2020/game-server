@@ -2,12 +2,31 @@ package consul
 
 import (
 	"fmt"
-	"game-server/framework/gen"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 )
 
-func toConsulConfig(options gen.ConsulOptions) *api.Config {
+const (
+	defaultAddress         = "127.0.0.1:8500"
+	defaultTTL             = 5 * time.Second
+	defaultDeregisterAfter = 5 * time.Minute
+)
+
+type Options struct {
+	Address         string
+	Scheme          string
+	Token           string
+	Datacenter      string
+	TTL             time.Duration
+	DeregisterAfter time.Duration
+}
+
+func DefaultOptions() Options {
+	return NormalizeOptions(Options{})
+}
+
+func toConsulConfig(options Options) *api.Config {
 	consulCfg := api.DefaultConfig()
 	if options.Address != "" {
 		consulCfg.Address = options.Address
@@ -24,13 +43,28 @@ func toConsulConfig(options gen.ConsulOptions) *api.Config {
 	return consulCfg
 }
 
-func normalization(options gen.ConsulOptions) gen.ConsulOptions {
-	return gen.NormalizeConsulOptions(options)
+func NormalizeOptions(options Options) Options {
+	if options.TTL <= 0 {
+		options.TTL = defaultTTL
+	}
+	if options.DeregisterAfter <= 0 {
+		options.DeregisterAfter = defaultDeregisterAfter
+	}
+	if options.Address == "" {
+		options.Address = defaultAddress
+	}
+	return options
 }
 
-func validate(options gen.ConsulOptions) error {
-	if err := gen.ValidateConsulOptions(options); err != nil {
-		return fmt.Errorf("invalid consul options: %w", err)
+func ValidateOptions(options Options) error {
+	if options.Address == "" {
+		return fmt.Errorf("consul address is empty")
+	}
+	if options.TTL <= 0 {
+		return fmt.Errorf("invalid consul ttl: %s", options.TTL)
+	}
+	if options.DeregisterAfter <= 0 {
+		return fmt.Errorf("invalid consul deregister-after: %s", options.DeregisterAfter)
 	}
 	return nil
 }

@@ -80,6 +80,60 @@ func TestManager_AddComponentErrors(t *testing.T) {
 	}
 }
 
+func TestManager_RemoveComponentBeforeStart(t *testing.T) {
+	mgr := NewComponentsMgr()
+	events := make([]string, 0)
+	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
+	c2 := &recordingComponentB{recordingComponent: &recordingComponent{id: "c2", events: &events}}
+
+	if err := mgr.AddComponent(c1); err != nil {
+		t.Fatalf("AddComponent c1 failed: %v", err)
+	}
+	if err := mgr.AddComponent(c2); err != nil {
+		t.Fatalf("AddComponent c2 failed: %v", err)
+	}
+	if err := mgr.RemoveComponent((*recordingComponentA)(nil)); err != nil {
+		t.Fatalf("RemoveComponent c1 failed: %v", err)
+	}
+
+	if got := mgr.ComponentCount(); got != 1 {
+		t.Fatalf("ComponentCount mismatch after remove, got=%d want=1", got)
+	}
+	if got := mgr.GetComponent((*recordingComponentA)(nil)); got != nil {
+		t.Fatalf("removed component should not be returned, got=%T", got)
+	}
+	if got := mgr.GetComponent((*recordingComponentB)(nil)); got != c2 {
+		t.Fatalf("remaining component mismatch, got=%T", got)
+	}
+
+	// 移除后同类型可再次注册。
+	if err := mgr.AddComponent(&recordingComponentA{recordingComponent: &recordingComponent{id: "c3", events: &events}}); err != nil {
+		t.Fatalf("AddComponent after remove failed: %v", err)
+	}
+}
+
+func TestManager_RemoveComponentErrors(t *testing.T) {
+	mgr := NewComponentsMgr()
+	events := make([]string, 0)
+	c1 := &recordingComponentA{recordingComponent: &recordingComponent{id: "c1", events: &events}}
+
+	if err := mgr.RemoveComponent(nil); !errors.Is(err, ErrComponentTypeCannotBeNil) {
+		t.Fatalf("RemoveComponent(nil) error mismatch, got=%v", err)
+	}
+	if err := mgr.RemoveComponent((*recordingComponentA)(nil)); !errors.Is(err, ErrComponentNotRegistered) {
+		t.Fatalf("RemoveComponent(not registered) error mismatch, got=%v", err)
+	}
+	if err := mgr.AddComponent(c1); err != nil {
+		t.Fatalf("AddComponent failed: %v", err)
+	}
+	if err := mgr.Start(context.Background()); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if err := mgr.RemoveComponent((*recordingComponentA)(nil)); !errors.Is(err, ErrCannotRemoveComponentAfterStarted) {
+		t.Fatalf("RemoveComponent after started error mismatch, got=%v", err)
+	}
+}
+
 func TestManager_StartInitOrderAndCannotRestart(t *testing.T) {
 	mgr := NewComponentsMgr()
 	events := make([]string, 0)

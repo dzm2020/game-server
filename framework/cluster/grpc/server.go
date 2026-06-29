@@ -1,44 +1,40 @@
-package grpc_cluster
+package grpc
 
 import (
 	"context"
-	"errors"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
-	"io"
 	"net"
 	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/status"
 )
 
 const serverComponent = "cluster.grpc.server"
 
-// NewNodeServer 创建服务端
-func NewNodeServer(address string, cluster *Cluster) *NodeServer {
-	return &NodeServer{
+// newServer 创建服务端
+func newServer(address string, cluster *Cluster) *server {
+	return &server{
 		address: address,
 		cluster: cluster,
 		logger:  glog.GetLogger().With(gen.FieldComponent(serverComponent), zap.String("address", address)),
 	}
 }
 
-// NodeServer gRPC服务端
-type NodeServer struct {
+// server gRPC服务端
+type server struct {
 	UnimplementedNodeServiceServer
-	address string
-	lis     net.Listener
-	server  *grpc.Server
-	cluster *Cluster
-	logger  *zap.Logger
+	address  string
+	listener net.Listener
+	server   *grpc.Server
+	cluster  *Cluster
+	logger   *zap.Logger
 }
 
-func (s *NodeServer) run() error {
+func (s *server) run() error {
 
 	s.logger.Info("Server启动")
 
@@ -48,16 +44,15 @@ func (s *NodeServer) run() error {
 	}
 
 	s.cluster.bgGroup.Go(func(ctx context.Context) {
-		if err := s.server.Serve(s.lis); err != nil {
+		if err := s.server.Serve(s.listener); err != nil {
 			if isServerStreamClosedErr(err) {
 				s.logger.Info("Server退出", zap.Error(err))
 				return
 			}
 			s.logger.Error("Server退出", zap.Error(err))
 			return
-		} else {
-			s.logger.Info("Server退出")
 		}
+		s.logger.Info("Server退出")
 	})
 	return nil
 }
@@ -67,8 +62,8 @@ func (s *NodeServer) run() error {
 //	@Description: grpc集群服务
 //	@receiver s
 //	@return error
-func (s *NodeServer) listen() error {
-	lis, err := net.Listen("tcp", s.address)
+func (s *server) listen() error {
+	listener, err := net.Listen("tcp", s.address)
 	if err != nil {
 		return err
 	}
@@ -81,7 +76,7 @@ func (s *NodeServer) listen() error {
 		}),
 	)
 	RegisterNodeServiceServer(server, s)
-	s.lis = lis
+	s.listener = listener
 	s.server = server
 	return nil
 }
@@ -92,7 +87,7 @@ func (s *NodeServer) listen() error {
 //	@receiver s
 //	@param stream
 //	@return error
-func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
+func (s *server) Stream(stream NodeService_StreamServer) error {
 	s.logger.Info("接收Stream启动")
 	for {
 		msg, err := stream.Recv()
@@ -111,18 +106,14 @@ func (s *NodeServer) Stream(stream NodeService_StreamServer) error {
 	}
 }
 
-func isServerStreamClosedErr(err error) bool {
-	return err == io.EOF || errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
-}
-
 // shutdown
 //
 //	@Description: 关闭服务
 //	@receiver s
 //	@return error
-func (s *NodeServer) shutdown() {
-	if s.lis != nil {
-		_ = s.lis.Close()
+func (s *server) shutdown() {
+	if s.listener != nil {
+		_ = s.listener.Close()
 	}
 	if s.server != nil {
 		done := make(chan struct{})
@@ -137,5 +128,4 @@ func (s *NodeServer) shutdown() {
 		}
 	}
 	s.logger.Info("Server退出")
-	return
 }

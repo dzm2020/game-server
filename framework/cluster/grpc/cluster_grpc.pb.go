@@ -4,7 +4,7 @@
 // - protoc             v6.30.2
 // source: cluster.proto
 
-package grpc_cluster
+package grpc
 
 import (
 	context "context"

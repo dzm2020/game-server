@@ -13,8 +13,11 @@ import (
 
 var (
 	ErrComponentCannotBeNil                = fmt.Errorf("组件不能为空")
+	ErrComponentTypeCannotBeNil            = fmt.Errorf("组件类型不能为空")
 	ErrCannotRegisterComponentAfterStarted = fmt.Errorf("组件启动后无法注册组件")
+	ErrCannotRemoveComponentAfterStarted   = fmt.Errorf("组件启动后无法移除组件")
 	ErrComponentAlreadyRegistered          = fmt.Errorf("组件已注册")
+	ErrComponentNotRegistered              = fmt.Errorf("组件未注册")
 	ErrManagerAlreadyStarted               = fmt.Errorf("管理器已启动")
 	ErrManagerStoppedCannotRestart         = fmt.Errorf("管理器已停止，无法重启")
 	ErrFailedToStartComponent              = fmt.Errorf("组件启动失败")
@@ -27,6 +30,7 @@ type IManager interface {
 	ComponentCount() int
 	GetComponent(t any) IComponent
 	AddComponent(component IComponent) error
+	RemoveComponent(t IComponent) error
 	Range(fn func(component IComponent))
 }
 
@@ -96,6 +100,37 @@ func (cm *Manager) AddComponent(component IComponent) error {
 	// 注册组件
 	cm.components.Set(componentType, component)
 	cm.order = append(cm.order, componentType)
+	return nil
+}
+
+// RemoveComponent 根据组件类型移除已注册组件。
+// 仅允许在管理器启动前移除，避免破坏运行中的生命周期顺序。
+func (cm *Manager) RemoveComponent(t IComponent) error {
+	if cm.started.Load() {
+		return ErrCannotRemoveComponentAfterStarted
+	}
+	if t == nil {
+		return ErrComponentCannotBeNil
+	}
+	componentType := reflect.TypeOf(t)
+	if componentType == nil {
+		return ErrComponentTypeCannotBeNil
+	}
+
+	cm.orderMu.Lock()
+	defer cm.orderMu.Unlock()
+
+	if _, exists := cm.components.Get(componentType); !exists {
+		return ErrComponentNotRegistered
+	}
+
+	cm.components.Delete(componentType)
+	for idx, typ := range cm.order {
+		if typ == componentType {
+			cm.order = append(cm.order[:idx], cm.order[idx+1:]...)
+			break
+		}
+	}
 	return nil
 }
 

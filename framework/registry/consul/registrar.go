@@ -46,7 +46,7 @@ func (rr *Registrar) Start(ctx context.Context) error {
 //	@receiver rr
 //	@param reg
 //	@return error
-func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) error {
+func (rr *Registrar) Register(reg ServiceInstance, options Options) error {
 	if reg.ID == "" || reg.Name == "" {
 		return gen.ErrConsulInvalidServiceReg
 	}
@@ -78,7 +78,7 @@ func (rr *Registrar) Register(reg ServiceInstance, options gen.ConsulOptions) er
 //	@param reg
 //	@param options
 //	@return *api.AgentServiceRegistration
-func (rr *Registrar) instanceToRegistration(reg ServiceInstance, options gen.ConsulOptions) (*api.AgentServiceRegistration, error) {
+func (rr *Registrar) instanceToRegistration(reg ServiceInstance, options Options) (*api.AgentServiceRegistration, error) {
 	host, rawPort, err := netutil.SplitHostPort(reg.RpcAddress)
 	if err != nil {
 		rr.logger.Error("注册失败", zap.String("address", reg.RpcAddress), gen.FieldErr(err))
@@ -176,21 +176,6 @@ func (rr *Registrar) SetHealthState(serviceID, status string) error {
 	s.setState(status)
 	rr.logger.Info("更新内存中的TTL状态", zap.String("service_id", serviceID), zap.String("status", status))
 	return nil
-}
-
-// getTTLState
-//
-//	@Description: 获取指定服务当前缓存的 TTL 状态
-//	@receiver rr
-//	@param serviceID
-//	@return ttlState
-//	@return bool
-func (rr *Registrar) getTTLState(serviceID string) (string, bool) {
-	s, ok := rr.services.Get(serviceID)
-	if !ok || s == nil {
-		return "", false
-	}
-	return s.getState(), ok
 }
 
 func (rr *Registrar) Stop(ctx context.Context) error {
