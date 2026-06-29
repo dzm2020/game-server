@@ -31,7 +31,7 @@ type Discoverer struct {
 	logger    *zap.Logger
 
 	cache       *maputil.ConcurrentMap[string, []ServiceInstance]
-	instanceMap *maputil.ConcurrentMap[string, ServiceInstance] // instanceMap 以服务实例ID为索引，便于按ID快速查询实例信息。
+	instanceMap atomic.Pointer[maputil.ConcurrentMap[string, ServiceInstance]] // instanceMap 以服务实例ID为索引，便于按ID快速查询实例信息。
 	workers     *maputil.ConcurrentMap[string, context.CancelFunc]
 
 	subMu    sync.RWMutex
@@ -45,15 +45,16 @@ type Discoverer struct {
 //	@param logger
 //	@return *Discoverer
 func newDiscoverer(client *api.Client, logger *zap.Logger) *Discoverer {
-	return &Discoverer{
-		client:      client,
-		waitTime:    30 * time.Second,
-		logger:      logger,
-		cache:       maputil.NewConcurrentMap[string, []ServiceInstance](10),
-		instanceMap: maputil.NewConcurrentMap[string, ServiceInstance](10),
-		workers:     maputil.NewConcurrentMap[string, context.CancelFunc](10),
-		watchers:    make(map[string]map[string]gen.ServiceChangeHandler),
+	d := &Discoverer{
+		client:   client,
+		waitTime: 30 * time.Second,
+		logger:   logger,
+		cache:    maputil.NewConcurrentMap[string, []ServiceInstance](10),
+		workers:  maputil.NewConcurrentMap[string, context.CancelFunc](10),
+		watchers: make(map[string]map[string]gen.ServiceChangeHandler),
 	}
+	d.instanceMap.Store(maputil.NewConcurrentMap[string, ServiceInstance](10))
+	return d
 }
 
 // Start
@@ -272,7 +273,11 @@ func (d *Discoverer) DiscoverAll() map[string][]ServiceInstance {
 }
 
 func (d *Discoverer) GetInstance(serverID string) (ServiceInstance, bool) {
-	instances, ok := d.instanceMap.Get(serverID)
+	instanceMap := d.instanceMap.Load()
+	if instanceMap == nil {
+		return ServiceInstance{}, false
+	}
+	instances, ok := instanceMap.Get(serverID)
 	return instances, ok
 }
 
@@ -514,7 +519,7 @@ func (d *Discoverer) rebuildInstanceMapLocked() {
 		}
 		return true
 	})
-	d.instanceMap = instanceMap
+	d.instanceMap.Store(instanceMap)
 }
 
 // instancesFromEntries

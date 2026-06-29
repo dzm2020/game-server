@@ -30,96 +30,122 @@ type Registry struct {
 }
 
 func (r *Registry) Init(ctx context.Context) error {
-	if err := r.BaseComponent.Init(ctx); err != nil {
-		return err
-	}
-	//  初始化日志
-	r.logger = glog.GetLogger().With(zap.String("component", registryComponent))
+	return r.BaseComponent.GuardInit(ctx, func(ctx context.Context) error {
+		//  初始化日志
+		r.logger = glog.GetLogger().With(zap.String("component", registryComponent))
 
-	//  初始化options
-	options := r.node.GetOptions().Consul
-	r.options = normalization(options)
-	if err := validate(r.options); err != nil {
-		return err
-	}
-	config := toConsulConfig(options)
+		//  初始化options
+		options := r.node.GetOptions().Consul
+		r.options = normalization(options)
+		if err := validate(r.options); err != nil {
+			return err
+		}
+		config := toConsulConfig(options)
 
-	//  创建客户端
-	client, err := api.NewClient(config)
-	if err != nil {
-		return err
-	}
-	r.Registrar = newRegistrar(client, r.logger)
-	r.Discoverer = newDiscoverer(client, r.logger)
+		//  创建客户端
+		client, err := api.NewClient(config)
+		if err != nil {
+			return err
+		}
+		r.Registrar = newRegistrar(client, r.logger)
+		r.Discoverer = newDiscoverer(client, r.logger)
 
-	r.logger.Info("初始化完成",
-		zap.String("address", options.Address),
-		zap.Duration("ttl", options.TTL),
-		zap.Duration("deregisterAfter", options.DeregisterAfter))
+		r.logger.Info("初始化完成",
+			zap.String("address", options.Address),
+			zap.Duration("ttl", options.TTL),
+			zap.Duration("deregisterAfter", options.DeregisterAfter))
 
-	return nil
+		return nil
+	})
 }
 
 func (r *Registry) Start(ctx context.Context) error {
-	if er := r.BaseComponent.Start(ctx); er != nil {
-		return er
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := r.Discoverer.Start(ctx); err != nil {
-		return err
-	}
-	if err := r.Registrar.Start(ctx); err != nil {
-		return err
-	}
-	return nil
+	return r.BaseComponent.GuardStart(ctx, func(ctx context.Context) error {
+		if r.Discoverer == nil || r.Registrar == nil {
+			return gen.ErrRegistryNil
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if err := r.Discoverer.Start(ctx); err != nil {
+			return err
+		}
+		if err := r.Registrar.Start(ctx); err != nil {
+			_ = r.Discoverer.Stop(context.Background())
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *Registry) Register(reg ServiceInstance) error {
+	if r.Status() != component.StateStarted {
+		return gen.ErrComponentNotStart
+	}
 	return r.Registrar.Register(reg, r.options)
 }
 
 func (r *Registry) Deregister(serviceID string) error {
+	if r.Status() != component.StateStarted {
+		return gen.ErrComponentNotStart
+	}
 	return r.Registrar.Deregister(serviceID)
 }
 
 func (r *Registry) SetHealthState(serviceID string, state gen.ServiceHealthState) error {
+	if r.Status() != component.StateStarted {
+		return gen.ErrComponentNotStart
+	}
 	return r.Registrar.SetHealthState(serviceID, state)
 }
 
 func (r *Registry) Discover(serviceName string) []ServiceInstance {
+	if r.Status() != component.StateStarted {
+		return nil
+	}
 	return r.Discoverer.Discover(serviceName)
 }
 
 func (r *Registry) DiscoverAll() map[string][]ServiceInstance {
+	if r.Status() != component.StateStarted {
+		return nil
+	}
 	return r.Discoverer.DiscoverAll()
 }
 
 func (r *Registry) ListServices() []string {
+	if r.Status() != component.StateStarted {
+		return nil
+	}
 	return r.Discoverer.ListServices()
 }
 
 func (r *Registry) Watch(serviceName string, onChange gen.ServiceChangeHandler) (string, error) {
+	if r.Status() != component.StateStarted {
+		return "", gen.ErrComponentNotStart
+	}
 	return r.Discoverer.Watch(serviceName, onChange)
 }
 
 func (r *Registry) Unwatch(serviceName, watchID string) {
+	if r.Status() != component.StateStarted {
+		return
+	}
 	r.Discoverer.Unwatch(serviceName, watchID)
 }
 
 func (r *Registry) Stop(ctx context.Context) error {
-	if er := r.BaseComponent.Stop(ctx); er != nil {
-		return er
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := r.Discoverer.Stop(ctx); err != nil {
-		return err
-	}
-	if err := r.Registrar.Stop(ctx); err != nil {
-		return err
-	}
-	return nil
+	return r.BaseComponent.GuardStop(ctx, func(ctx context.Context) error {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		var lastErr error
+		if err := r.Discoverer.Stop(ctx); err != nil {
+			lastErr = err
+		}
+		if err := r.Registrar.Stop(ctx); err != nil {
+			lastErr = err
+		}
+		return lastErr
+	})
 }

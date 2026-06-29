@@ -139,7 +139,9 @@ func (rr *Registrar) addServiceKeeper(serviceID string, ttl time.Duration) {
 	if ok {
 		return
 	}
-	keeper.run(rr.group.Context())
+	rr.group.Go(func(ctx context.Context) {
+		keeper.run(ctx)
+	})
 }
 
 // removeService
@@ -150,9 +152,11 @@ func (rr *Registrar) addServiceKeeper(serviceID string, ttl time.Duration) {
 func (rr *Registrar) removeServiceKeeper(serviceID string) {
 	s, ok := rr.services.Get(serviceID)
 	if !ok || s == nil {
+		rr.services.Delete(serviceID)
 		return
 	}
 	s.stop()
+	rr.services.Delete(serviceID)
 	rr.logger.Info("移除注册服务", zap.String("service_id", serviceID))
 }
 

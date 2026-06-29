@@ -6,7 +6,6 @@ import (
 	"game-server/framework/grs"
 	"game-server/framework/pkg/component"
 
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,8 +30,8 @@ type System struct {
 	processDict *maputil.ConcurrentMap[uint64, *process]
 	nameDict    *maputil.ConcurrentMap[string, *process]
 	nextID      atomic.Uint64
-	lifecycleMu sync.Mutex
-	waitGroup   *grs.Group
+
+	waitGroup *grs.Group
 }
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
@@ -43,13 +42,9 @@ func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PI
 }
 
 func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID, error) {
-	s.lifecycleMu.Lock()
-	defer s.lifecycleMu.Unlock()
-
-	if s.Status() == component.LifecycleStateStopped {
-		return gen.NoSender, gen.ErrActorSystemClosed
+	if s.Status() != component.LifecycleStateStarted {
+		return gen.NoSender, gen.ErrComponentNotStart
 	}
-
 	if handler == nil {
 		return gen.NoSender, gen.ErrActorNilHandler
 	}
@@ -143,12 +138,8 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 	if timeout <= 0 {
 		timeout = gen.DefaultActorAskTimeout
 	}
-	proc, err := s.getActiveProcess(target)
-	if err != nil {
-		return nil, err
-	}
 	reply := newAskReply()
-	err = proc.send(gen.ActorEnvelope{
+	err := s.SendEnvelope(target, gen.ActorEnvelope{
 		Payload: msg,
 		Sender:  from,
 		Respond: reply.responder(),
@@ -164,6 +155,9 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 }
 
 func (s *System) DoTask(from *gen.PID, target any, task gen.ActorTask) error {
+	if s.Status() != component.LifecycleStateStarted {
+		return gen.ErrComponentNotStart
+	}
 	return s.SendEnvelope(target, gen.ActorEnvelope{
 		Sender:  from,
 		Payload: task,
@@ -179,9 +173,6 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) (err error) {
 }
 
 func (s *System) getActiveProcess(target any) (*process, error) {
-	if s.Status() == component.LifecycleStateStopped {
-		return nil, gen.ErrActorSystemClosed
-	}
 	proc, ok := s.getProcess(target)
 	if !ok {
 		return nil, gen.ErrActorNotFound
@@ -198,15 +189,11 @@ func (s *System) StopProcess(target any) {
 }
 
 func (s *System) Stop(ctx context.Context) error {
-	if err := s.BaseComponent.Stop(ctx); err != nil {
-		return nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	s.lifecycleMu.Lock()
-	s.waitGroup.Cancel()
-	s.lifecycleMu.Unlock()
-
-	return s.waitGroup.Wait(ctx)
+	return s.BaseComponent.GuardStop(ctx, func(ctx context.Context) error {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		s.waitGroup.Cancel()
+		return s.waitGroup.Wait(ctx)
+	})
 }

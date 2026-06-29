@@ -2,7 +2,6 @@ package grpc_cluster
 
 import (
 	"context"
-	"fmt"
 	"game-server/framework/gen"
 	"game-server/framework/grs"
 	"game-server/framework/pkg/component"
@@ -59,59 +58,47 @@ func (c *Cluster) validateDependencies() error {
 }
 
 func (c *Cluster) Init(ctx context.Context) error {
-	if err := c.BaseComponent.Init(ctx); err != nil {
-		return err
-	}
-	if err := c.validateDependencies(); err != nil {
-		return err
-	}
-	c.logger = glog.GetLogger().With(glog.Component(clusterComponent), glog.NodeID(c.selfNodeID()))
-
-	opts := c.node.GetOptions()
-	c.clientSendChanSize = opts.Grpc.ClientSendChanSize
-	c.clusterNames = opts.Clusters
-	c.clusterSet = make(map[string]struct{}, len(c.clusterNames))
-	for _, name := range c.clusterNames {
-		if name == "" {
-			continue
+	return c.BaseComponent.GuardInit(ctx, func(ctx context.Context) error {
+		if err := c.validateDependencies(); err != nil {
+			return err
 		}
-		c.clusterSet[name] = struct{}{}
-	}
-	c.server = NewNodeServer(opts.RpcAddress, c)
-	c.logger.Info("初始化成功",
-		zap.Strings("clusterNames", c.clusterNames),
-		zap.Int("clientSendChanSize", c.clientSendChanSize),
-	)
-	return nil
+		c.logger = glog.GetLogger().With(glog.Component(clusterComponent), glog.NodeID(c.selfNodeID()))
+
+		opts := c.node.GetOptions()
+		c.clientSendChanSize = opts.Grpc.ClientSendChanSize
+		c.clusterNames = opts.Clusters
+		c.clusterSet = make(map[string]struct{}, len(c.clusterNames))
+		for _, name := range c.clusterNames {
+			if name == "" {
+				continue
+			}
+			c.clusterSet[name] = struct{}{}
+		}
+		c.server = NewNodeServer(opts.RpcAddress, c)
+		c.logger.Info("初始化成功",
+			zap.Strings("clusterNames", c.clusterNames),
+			zap.Int("clientSendChanSize", c.clientSendChanSize),
+		)
+		return nil
+	})
 }
 
 func (c *Cluster) Start(ctx context.Context) error {
-	if c.Status() != component.LifecycleStateInited {
-		return c.BaseComponent.Start(ctx)
-	}
-	c.logger.Info("开始启动")
-	c.bgGroup = grs.NewGroup(ctx)
-	if err := c.server.run(); err != nil {
-		c.bgGroup = nil
-		return err
-	}
-
-	c.connectAll()
-
-	c.bgGroup.Go(func(ctx context.Context) {
-		c.connectPeers(ctx)
-	})
-
-	if err := c.BaseComponent.Start(ctx); err != nil {
-		cleanupErr := c.shutdownRuntime(context.Background())
-		if cleanupErr != nil {
-			return fmt.Errorf("%w: cleanup failed: %v", err, cleanupErr)
+	return c.BaseComponent.GuardStart(ctx, func(ctx context.Context) error {
+		c.bgGroup = grs.NewGroup(ctx)
+		if err := c.server.run(); err != nil {
+			c.bgGroup = nil
+			return err
 		}
-		return err
-	}
 
-	c.logger.Info("启动完成")
-	return nil
+		c.connectAll()
+
+		c.bgGroup.Go(func(ctx context.Context) {
+			c.connectPeers(ctx)
+		})
+		c.logger.Info("启动完成")
+		return nil
+	})
 }
 
 func (c *Cluster) addClient(client *Client) {
@@ -266,7 +253,6 @@ func (c *Cluster) resolveSendClient(to *gen.PID) (*Client, error) {
 //	@param msg
 //	@return error  部分失败仍返回 nil
 func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
-
 	if to == nil {
 		c.logger.Error("集群广播", glog.Err(gen.ErrActorPidNil))
 		return gen.ErrActorPidNil
@@ -328,40 +314,9 @@ func (c *Cluster) Dispatch(msg *gen.ClusterMessage) error {
 		return err
 	}
 	c.logger.Debug("分发消息",
-		zap.String("from", pidString(msg.SourcePid)),
-		zap.String("to", pidString(msg.TargetPid)),
+		zap.String("from", msg.SourcePid.String()),
+		zap.String("to", msg.TargetPid.String()),
 	)
-	return nil
-}
-
-// Stop 关闭集群连接
-func (c *Cluster) Stop(ctx context.Context) error {
-	if err := c.BaseComponent.Stop(ctx); err != nil {
-		return err
-	}
-	if err := c.shutdownRuntime(ctx); err != nil {
-		return err
-	}
-	c.logger.Info("集群已关闭")
-	return nil
-}
-
-func (c *Cluster) shutdownRuntime(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if c.server != nil {
-		c.server.shutdown()
-	}
-	c.closeAllClients()
-	if c.bgGroup != nil {
-		c.bgGroup.Cancel()
-		if err := c.bgGroup.Wait(ctx); err != nil {
-			c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
-			return err
-		}
-		c.bgGroup = nil
-	}
 	return nil
 }
 
@@ -396,11 +351,25 @@ func (c *Cluster) cleanupStaleClients(active map[string]struct{}) {
 	}
 }
 
-func pidString(pid *gen.PID) string {
-	if pid == nil {
-		return ""
-	}
-	return pid.String()
+// Stop 关闭集群连接
+func (c *Cluster) Stop(ctx context.Context) error {
+	return c.BaseComponent.GuardStop(ctx, func(ctx context.Context) error {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if c.server != nil {
+			c.server.shutdown()
+		}
+		c.closeAllClients()
+		c.bgGroup.Cancel()
+		if err := c.bgGroup.Wait(ctx); err != nil {
+			c.logger.Warn("等待集群后台协程退出超时", glog.Err(err))
+			return err
+		}
+		c.logger.Info("集群已关闭")
+		return nil
+	})
+
 }
 
 func NewClusterMessage(from, to *gen.PID, msg *gen.Message) (*gen.ClusterMessage, error) {

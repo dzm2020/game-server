@@ -24,7 +24,7 @@ func (E *Error) Code() int32 {
 }
 
 var (
-	ErrNodeIsNil = NewError("node is nil", 1)
+
 	// actor
 	ErrActorMailboxFull         = NewError("actor mailbox is full", 2)
 	ErrActorAskTimeout          = NewError("actor ask timeout", 3)
@@ -92,6 +92,9 @@ var (
 	ErrGatewayInvalidPushParams      = NewError("gateway invalid push params", 109)
 	ErrGatewayConnectionUnavailable  = NewError("gateway connection is unavailable", 110)
 	ErrGatewayInvalidMessageType     = NewError("gateway invalid message type", 111)
+
+	ErrNodeIsNil         = NewError("node is nil", 150)
+	ErrComponentNotStart = NewError("component no started", 151)
 )
 
 func WrapErrNetworkUnsupportedProtocol(proto string) error {
