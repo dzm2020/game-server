@@ -2,11 +2,9 @@ package actor
 
 import (
 	"game-server/framework/gen"
-	"game-server/framework/pkg/stopper"
 )
 
 type process struct {
-	stopper.Stopper
 	system  *System
 	ctx     *actorContext
 	mailbox *mailbox

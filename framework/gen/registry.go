@@ -1,7 +1,6 @@
 package gen
 
 import (
-	"context"
 	"game-server/framework/pkg/component"
 )
 

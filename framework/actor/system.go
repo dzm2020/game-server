@@ -132,8 +132,13 @@ func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
 	if target == nil {
 		return gen.ErrActorPidNil
 	}
-	if to, _ := target.(*gen.PID); to != nil && to.NodeID != s.node.GetId() {
-		return s.remoteTell(from, to, msg)
+	if to, ok := target.(*gen.PID); ok {
+		if to == nil {
+			return gen.ErrActorPidNil
+		}
+		if to.NodeID != s.node.GetId() {
+			return s.remoteTell(from, to, msg)
+		}
 	}
 	return s.localTell(from, target, msg)
 }
@@ -164,8 +169,13 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 		return nil, gen.ErrActorPidNil
 	}
 	//  不提供给远程调用
-	if to, _ := target.(*gen.PID); to != nil && to.NodeID != s.node.GetId() {
-		return nil, gen.ErrActorNoAskClusterProvided
+	if to, ok := target.(*gen.PID); ok {
+		if to == nil {
+			return nil, gen.ErrActorPidNil
+		}
+		if to.NodeID != s.node.GetId() {
+			return nil, gen.ErrActorNoAskClusterProvided
+		}
 	}
 	reply := newAskReply()
 	err := s.SendEnvelope(target, gen.ActorEnvelope{
@@ -204,6 +214,9 @@ func (s *System) SendEnvelope(target any, env gen.ActorEnvelope) error {
 
 func (s *System) getActiveProcess(target any) (*process, error) {
 	if target == nil {
+		return nil, gen.ErrActorPidNil
+	}
+	if pid, ok := target.(*gen.PID); ok && pid == nil {
 		return nil, gen.ErrActorPidNil
 	}
 	proc, ok := s.getProcess(target)
