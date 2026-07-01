@@ -14,8 +14,8 @@ import (
 //	@Description: 将 Consul ServiceEntry 列表转换为统一的 ServiceInstance 列表
 //	@param entries
 //	@return []ServiceInstance
-func entriesToInstances(entries []*api.ServiceEntry) []ServiceInstance {
-	instances := make([]ServiceInstance, 0, len(entries))
+func entriesToInstances(entries []*api.ServiceEntry) map[string]ServiceInstance {
+	instances := make(map[string]ServiceInstance, len(entries))
 	for _, entry := range entries {
 		if entry == nil || entry.Service == nil {
 			continue
@@ -28,14 +28,14 @@ func entriesToInstances(entries []*api.ServiceEntry) []ServiceInstance {
 			}
 
 		}
-		instances = append(instances, ServiceInstance{
+		instances[entry.Service.ID] = ServiceInstance{
 			ID:         entry.Service.ID,
 			Name:       entry.Service.Service,
 			ExtAddress: extAddress,
 			RpcAddress: net.JoinHostPort(entry.Service.Address, strconv.Itoa(entry.Service.Port)),
 			Tags:       entry.Service.Tags,
 			Meta:       entry.Service.Meta,
-		})
+		}
 	}
 	return instances
 }

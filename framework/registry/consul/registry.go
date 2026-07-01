@@ -42,7 +42,7 @@ type Registry struct {
 
 type discoverCacheEntry struct {
 	expireAt  time.Time
-	instances []ServiceInstance
+	instances map[string]ServiceInstance
 }
 
 func (r *Registry) Init(ctx context.Context) error {
@@ -166,7 +166,24 @@ func (r *Registry) SetHealthState(state gen.ServiceHealthState) error {
 	return nil
 }
 
-func (r *Registry) Discover(service string) []ServiceInstance {
+func (r *Registry) DiscoverByID(serviceID string) *ServiceInstance {
+	r.cacheMu.RLock()
+	defer r.cacheMu.RUnlock()
+	for service, _ := range r.discoverCache {
+		cache := r.Discover(service)
+		if cache == nil {
+			continue
+		}
+		instance, ok := cache[serviceID]
+		if !ok {
+			continue
+		}
+		return &instance
+	}
+	return nil
+}
+
+func (r *Registry) Discover(service string) map[string]ServiceInstance {
 	if r.Status() != component.StateStarted {
 		return nil
 	}
@@ -201,19 +218,19 @@ func (r *Registry) Discover(service string) []ServiceInstance {
 	if result == nil {
 		return nil
 	}
-	return cloneServiceInstances(result.([]ServiceInstance))
+	return result.(map[string]ServiceInstance)
 }
 
-func (r *Registry) setCache(service string, instances []ServiceInstance) {
+func (r *Registry) setCache(service string, instances map[string]ServiceInstance) {
 	r.cacheMu.Lock()
 	defer r.cacheMu.Unlock()
 	r.discoverCache[service] = discoverCacheEntry{
 		expireAt:  time.Now().Add(r.options.DiscoverCacheTTL),
-		instances: cloneServiceInstances(instances),
+		instances: instances,
 	}
 }
 
-func (r *Registry) getCache(service string) ([]ServiceInstance, bool, bool) {
+func (r *Registry) getCache(service string) (map[string]ServiceInstance, bool, bool) {
 	r.cacheMu.RLock()
 	cached, ok := r.discoverCache[service]
 	r.cacheMu.RUnlock()
@@ -221,7 +238,7 @@ func (r *Registry) getCache(service string) ([]ServiceInstance, bool, bool) {
 		return nil, false, false
 	}
 	fresh := time.Now().Before(cached.expireAt)
-	return cloneServiceInstances(cached.instances), fresh, true
+	return cached.instances, fresh, true
 }
 
 func (r *Registry) clearDiscoverCache() {

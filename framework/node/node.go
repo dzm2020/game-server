@@ -75,7 +75,7 @@ func (n *Node) init(options gen.NodeOptions) {
 
 	glog.Init(options.Logger, logOptions...)
 
-	n.registry = consul.New(n)
+	n.registry = consul.New()
 	n.cluster = grpc_cluster.New(n)
 	n.system = actor.NewSystem(n)
 
@@ -144,6 +144,11 @@ func (n *Node) SetCluster(cluster gen.ICluster) error {
 
 func (n *Node) Startup() (err error) {
 	n.AddComponents(n.registry, n.system, n.cluster)
+
+	n.cluster.SetLocalInvoker(n.system)
+	n.cluster.SetDiscovery()
+
+	n.system.SetRemoteInvoker()
 
 	if err = n.Start(context.Background()); err != nil {
 		return err

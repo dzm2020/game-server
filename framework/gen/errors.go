@@ -73,6 +73,7 @@ var (
 	ErrClusterInvokerIsNil         = NewError("cluster local invoker is nil", 67)
 	ErrServiceRegistered           = NewError("service registered", 68)
 	ErrServiceNotRegister          = NewError("service not register", 69)
+	ErrDiscoverIsNil               = NewError("discover is nil  ", 70)
 
 	// network detail
 	ErrNetworkChannelFull         = NewError("network channel full", 80)

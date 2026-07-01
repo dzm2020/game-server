@@ -49,5 +49,6 @@ type IRegistrar interface {
 }
 
 type IDiscovery interface {
-	Discover(service string) []ServiceInstance
+	Discover(service string) map[string]ServiceInstance
+	DiscoverByID(serviceID string) *ServiceInstance
 }

@@ -3,43 +3,33 @@ package grpc
 import (
 	"context"
 	"game-server/framework/gen"
+	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"sync"
 
+	"github.com/duke-git/lancet/v2/maputil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/connectivity"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/keepalive"
 )
 
 const clientComponent = "cluster.grpc.client"
 
-// clientConfig 节点配置
-type clientConfig struct {
-	nodeID   string
-	address  string
-	sendSize int
-	cluster  *Cluster
-}
-
 // newClient 创建节点连接
-func newClient(cfg clientConfig) *client {
+func newClient(instance gen.ServiceInstance, options ClientOptions, manager *maputil.ConcurrentMap[string, *client]) *client {
 	p := &client{
-		nodeID:  cfg.nodeID,
-		address: cfg.address,
-		sendCh:  make(chan *gen.ClusterMessage, cfg.sendSize),
-		cluster: cfg.cluster,
+		manager:  manager,
+		instance: instance,
+		options:  options,
+		sendCh:   make(chan *gen.ClusterMessage, options.SendChanSize),
 	}
 
 	p.logger = glog.GetLogger().With(
 		gen.FieldComponent(clientComponent),
-		gen.FieldNodeID(cfg.nodeID),
-		zap.String("address", cfg.address),
+		gen.FieldNodeID(p.getID()),
+		zap.String("address", p.getAddress()),
 	)
 
-	p.ctx, p.cancelFunc = context.WithCancel(p.cluster.bgGroup.Context())
 	p.logger.Debug("初始化客户端")
 	return p
 }
@@ -47,175 +37,82 @@ func newClient(cfg clientConfig) *client {
 type client struct {
 	mu sync.RWMutex
 
-	nodeID  string
-	address string
+	instance gen.ServiceInstance
+	options  ClientOptions
+	manager  *maputil.ConcurrentMap[string, *client]
 
 	conn   *grpc.ClientConn
 	stream NodeService_StreamClient
+	sendCh chan *gen.ClusterMessage
 
-	sendCh  chan *gen.ClusterMessage
-	cluster *Cluster
-
-	closeOnce sync.Once
-
-	logger *zap.Logger
-
+	closeOnce  sync.Once
+	logger     *zap.Logger
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 }
 
-func (p *client) start() {
-	p.cluster.bgGroup.Go(func(context.Context) {
-		if err := p.connect(); err != nil {
-			p.Close()
-			return
-		}
-		p.startIOLoops()
-		p.logger.Debug("客户端连接成功")
+func (p *client) getID() string {
+	return p.instance.GetID()
+}
+func (p *client) getAddress() string {
+	return p.instance.GetRpcAddress()
+}
+func (p *client) run(ctx context.Context) {
+	p.ctx, p.cancelFunc = context.WithCancel(ctx)
+	if err := p.connect(); err != nil {
+		p.Close(err)
+		return
+	}
+	grs.SafeGo(func() {
+		p.sendLoop()
 	})
+
+	p.logger.Debug("客户端连接成功")
 }
 
 // connect 建立连接
 func (p *client) connect() error {
-	backoffOptions := p.cluster.options.Client.Backoff
-	keepaliveOptions := p.cluster.options.Client.Keepalive
-	permitWithoutStream := defaultClientPermitWithoutStream
-	if keepaliveOptions.PermitWithoutStream != nil {
-		permitWithoutStream = *keepaliveOptions.PermitWithoutStream
-	}
-
-	conn, err := grpc.NewClient(p.address,
-		// 生产环境建议替换为 TLS 凭证（credentials.NewTLS），
-		// 当前使用明文凭证适用于内网可信环境。
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithConnectParams(grpc.ConnectParams{
-			Backoff: backoff.Config{
-				BaseDelay:  backoffOptions.BaseDelay,
-				Multiplier: backoffOptions.Multiplier,
-				Jitter:     backoffOptions.Jitter,
-				MaxDelay:   backoffOptions.MaxDelay,
-			},
-			MinConnectTimeout: backoffOptions.MinConnectTimeout,
-		}),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                keepaliveOptions.Time,
-			Timeout:             keepaliveOptions.Timeout,
-			PermitWithoutStream: permitWithoutStream,
-		}),
-		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"`+p.cluster.options.Client.LoadBalancingPolicy+`"}`),
-	)
+	conn, err := grpc.NewClient(p.instance.GetRpcAddress(), toDialOptions(p.options)...)
 	if err != nil {
-		p.logger.Error("客户端创建失败", gen.FieldErr(err))
 		return err
 	}
-
-	conn.Connect()
-	if err = p.waitReady(conn); err != nil {
-		p.logger.Error("等待客户端连接就绪失败", gen.FieldErr(err))
-		_ = conn.Close()
-		return err
-	}
-
-	waitForReady := defaultClientStreamWaitForReady
-	if p.cluster.options.Client.WaitForReady != nil {
-		waitForReady = *p.cluster.options.Client.WaitForReady
-	}
-
-	client := NewNodeServiceClient(conn)
-	stream, err := client.Stream(p.ctx, grpc.WaitForReady(waitForReady))
-	if err != nil {
-		p.logger.Error("客户端开启流失败", gen.FieldErr(err))
-		_ = conn.Close()
-		return err
-	}
-
 	p.mu.Lock()
 	p.conn = conn
+	p.mu.Unlock()
+
+	//  触发建立连接
+	ctx, cancel := context.WithTimeout(p.ctx, p.options.ConnectTimeout)
+	defer cancel()
+	cli := NewNodeServiceClient(conn)
+	stream, err := cli.Stream(ctx)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
 	p.stream = stream
 	p.mu.Unlock()
+
 	return nil
-}
-
-func (p *client) waitReady(conn *grpc.ClientConn) error {
-	waitCtx, waitCancel := context.WithTimeout(p.ctx, p.cluster.options.Client.ConnectTimeout)
-	defer waitCancel()
-
-	for {
-		state := conn.GetState()
-		if state == connectivity.Ready {
-			return nil
-		}
-		if state == connectivity.Shutdown {
-			return gen.ErrClusterPeerNotConnected
-		}
-		if !conn.WaitForStateChange(waitCtx, state) {
-			return waitCtx.Err()
-		}
-	}
-}
-
-func (p *client) startIOLoops() {
-	p.cluster.bgGroup.Go(func(_ context.Context) {
-		p.sendLoop()
-	})
-
-	p.cluster.bgGroup.Go(func(_ context.Context) {
-		p.recvLoop()
-	})
 }
 
 // sendLoop 发送循环
 func (p *client) sendLoop() {
+	var wrong error
+	defer p.Close(wrong)
 	for {
 		select {
 		case <-p.ctx.Done():
 			return
-		case msg, ok := <-p.sendCh:
-			if !ok {
-				return
-			}
+		case msg, _ := <-p.sendCh:
 			stream := p.currentStream()
-
 			if stream == nil {
-				p.logger.Error("发送流为空")
-				continue
+				wrong = gen.ErrClusterPeerNotConnected
+				return
 			}
-
 			if err := stream.Send(msg); err != nil {
-				p.logger.Error("流发送失败", gen.FieldErr(err))
-				p.Close()
+				wrong = err
 				return
 			}
-		}
-	}
-}
-
-// recvLoop 接收循环
-func (p *client) recvLoop() {
-	for {
-		stream := p.currentStream()
-
-		if stream == nil {
-			p.logger.Error("接收流为nil")
-			return
-		}
-
-		msg, err := stream.Recv()
-		if err != nil {
-			// 对端 handler 正常 return nil，流结束 || 连接关闭
-			if isServerStreamClosedErr(err) {
-				p.logger.Debug("接收流关闭", gen.FieldErr(err))
-				p.Close()
-				return
-			}
-
-			p.logger.Error("接收流关闭", gen.FieldErr(err))
-			p.Close()
-			return
-
-		}
-		if err = p.cluster.Dispatch(msg); err != nil {
-			p.logger.Error("分发消息失败", gen.FieldErr(err))
 		}
 	}
 }
@@ -247,7 +144,7 @@ func (p *client) IsConnected() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	if p.conn == nil {
+	if p.conn == nil || p.stream == nil {
 		return false
 	}
 	state := p.conn.GetState()
@@ -255,9 +152,9 @@ func (p *client) IsConnected() bool {
 }
 
 // Close 关闭节点连接
-func (p *client) Close() {
+func (p *client) Close(err error) {
 	p.closeOnce.Do(func() {
-		p.cluster.removeClient(p)
+
 		if p.cancelFunc != nil {
 			p.cancelFunc()
 		}
@@ -276,6 +173,13 @@ func (p *client) Close() {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		p.logger.Debug("客户端关闭")
+
+		if err != nil && !isServerStreamClosedErr(err) {
+			p.logger.Error("客户端关闭", zap.Error(err))
+		} else {
+			p.logger.Info("客户端关闭", zap.Any("reason", err))
+		}
+
+		p.manager.Delete(p.getID())
 	})
 }

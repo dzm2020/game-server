@@ -19,11 +19,16 @@ type ActorEnvelope struct {
 	Respond Responder
 }
 
+type ILocalInvoker interface {
+	Tell(from *PID, target any, msg *Message) error
+}
+
 type ISystem interface {
 	component.IComponent
+	ILocalInvoker
+	SetRemoteInvoker(invoker IRemoteInvoker)
 	Spawn(handler ActorHandler, opts SpawnOptions) (*PID, error)
 	SpawnActor(handler IActor, opts SpawnOptions) (*PID, error)
-	Tell(from *PID, target any, msg *Message) error
 	Ask(from *PID, target any, msg *Message, timeout time.Duration) ([]byte, error)
 	DoTask(from *PID, target any, task ActorTask) error
 	SendEnvelope(target any, env ActorEnvelope) error

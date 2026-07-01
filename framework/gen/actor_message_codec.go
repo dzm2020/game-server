@@ -9,6 +9,9 @@ const (
 )
 
 func Encode(msg *Message) ([]byte, error) {
+	if msg == nil {
+		return nil, ErrMessageNil
+	}
 	if len(msg.Data) >= MessageDataMaxSize {
 		return msg.Data, ErrMessageDataOverSize
 	}
@@ -30,7 +33,6 @@ func Encode(msg *Message) ([]byte, error) {
 }
 
 func Decode(buf []byte) (*Message, int, error) {
-
 	if len(buf) < HeadLen {
 		return nil, 0, nil
 	}

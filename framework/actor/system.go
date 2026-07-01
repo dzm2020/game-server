@@ -14,11 +14,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func NewSystem(node gen.INode) *System {
+func NewSystem() *System {
 	return &System{
 		processDict: maputil.NewConcurrentMap[uint64, *process](0),
 		nameDict:    maputil.NewConcurrentMap[string, *process](0),
-		node:        node,
 		waitGroup:   grs.NewGroup(context.Background()),
 	}
 }
@@ -28,11 +27,25 @@ var _ component.IComponent = (*System)(nil)
 
 type System struct {
 	component.BaseComponent
-	node        gen.INode
-	processDict *maputil.ConcurrentMap[uint64, *process]
-	nameDict    *maputil.ConcurrentMap[string, *process]
-	nextID      atomic.Uint64
-	waitGroup   *grs.Group
+
+	nodeID        string
+	processDict   *maputil.ConcurrentMap[uint64, *process]
+	nameDict      *maputil.ConcurrentMap[string, *process]
+	nextID        atomic.Uint64
+	remoteInvoker gen.IRemoteInvoker
+	waitGroup     *grs.Group
+}
+
+func (s *System) SetRemoteInvoker(invoker gen.IRemoteInvoker) {
+	s.remoteInvoker = invoker
+}
+
+func (s *System) SetNodeID(nodeID string) {
+	s.nodeID = nodeID
+}
+
+func (s *System) GetNodeID() string {
+	return s.nodeID
 }
 
 func (s *System) Spawn(handler gen.ActorHandler, opts gen.SpawnOptions) (*gen.PID, error) {
@@ -55,7 +68,7 @@ func (s *System) SpawnActor(handler gen.IActor, opts gen.SpawnOptions) (*gen.PID
 	}
 
 	id := s.nextID.Add(1)
-	pid := gen.NewPID(id, opts.Name, s.node.GetId())
+	pid := gen.NewPID(id, opts.Name, s.GetNodeID())
 
 	ctx := &actorContext{
 		self:       pid,
@@ -116,7 +129,7 @@ func (s *System) getProcessByPid(pid *gen.PID) (*process, bool) {
 	if pid == nil {
 		return nil, false
 	}
-	if pid.GetNodeID() != s.node.GetId() {
+	if pid.GetNodeID() != s.GetNodeID() {
 		return nil, false
 	}
 	if pid.ActorID != 0 {
@@ -129,14 +142,20 @@ func (s *System) getProcessByPid(pid *gen.PID) (*process, bool) {
 }
 
 func (s *System) Tell(from *gen.PID, target any, msg *gen.Message) error {
+	if s == nil {
+		return gen.ErrActorSystemNil
+	}
 	if target == nil {
 		return gen.ErrActorPidNil
+	}
+	if msg == nil {
+		return gen.ErrMessageNil
 	}
 	if to, ok := target.(*gen.PID); ok {
 		if to == nil {
 			return gen.ErrActorPidNil
 		}
-		if to.NodeID != s.node.GetId() {
+		if to.NodeID != s.GetNodeID() {
 			return s.remoteTell(from, to, msg)
 		}
 	}
@@ -154,11 +173,11 @@ func (s *System) remoteTell(from *gen.PID, to *gen.PID, msg *gen.Message) error 
 	if s.Status() != component.LifecycleStateStarted {
 		return gen.ErrComponentNotStart
 	}
-	cluster := s.node.GetCluster()
-	if cluster == nil {
+
+	if s.remoteInvoker == nil {
 		return gen.ErrClusterNil
 	}
-	return cluster.SendToNode(from, to, msg)
+	return s.remoteInvoker.SendToNode(from, to, msg)
 }
 
 func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.Duration) ([]byte, error) {
@@ -173,7 +192,7 @@ func (s *System) Ask(from *gen.PID, target any, msg *gen.Message, timeout time.D
 		if to == nil {
 			return nil, gen.ErrActorPidNil
 		}
-		if to.NodeID != s.node.GetId() {
+		if to.NodeID != s.GetNodeID() {
 			return nil, gen.ErrActorNoAskClusterProvided
 		}
 	}
