@@ -35,14 +35,11 @@ type server struct {
 }
 
 func (s *server) run() error {
-
 	s.logger.Info("Server启动")
-
 	if err := s.listen(); err != nil {
 		s.logger.Error("Server启动")
 		return err
 	}
-
 	s.cluster.bgGroup.Go(func(ctx context.Context) {
 		if err := s.server.Serve(s.listener); err != nil {
 			if isServerStreamClosedErr(err) {
@@ -67,7 +64,7 @@ func (s *server) listen() error {
 	if err != nil {
 		return err
 	}
-	server := grpc.NewServer(
+	grpcServer := grpc.NewServer(
 		grpc.MaxConcurrentStreams(100000), // 支持大量并发流
 		// 服务端
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
@@ -75,9 +72,9 @@ func (s *server) listen() error {
 			PermitWithoutStream: true,            // 设为 true：允许客户端在空闲时发送 Keepalive PING（更宽松）
 		}),
 	)
-	RegisterNodeServiceServer(server, s)
+	RegisterNodeServiceServer(grpcServer, s)
 	s.listener = listener
-	s.server = server
+	s.server = grpcServer
 	return nil
 }
 

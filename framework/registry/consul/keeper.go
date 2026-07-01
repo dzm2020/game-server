@@ -12,13 +12,15 @@ import (
 )
 
 func newServiceKeeper(client *api.Client, serviceId string, logger *zap.Logger, interval time.Duration) *serviceKeeper {
-	return &serviceKeeper{
+	s := &serviceKeeper{
 		client:    client,
 		serviceId: serviceId,
 		state:     gen.ServiceHealthStatePassing,
 		interval:  interval,
 		logger:    logger,
 	}
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	return s
 }
 
 type serviceKeeper struct {
@@ -38,14 +40,15 @@ func (service *serviceKeeper) getState() string {
 	defer service.mu.RUnlock()
 	return service.state
 }
+
 func (service *serviceKeeper) setState(state string) {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	service.state = state
 }
 
-func (service *serviceKeeper) run(ctx context.Context) {
-	service.ctx, service.cancel = context.WithCancel(ctx)
+func (service *serviceKeeper) run() {
+
 	ticker := time.NewTicker(service.interval)
 	defer ticker.Stop()
 	_ = service.updateTTL()
@@ -74,16 +77,26 @@ func (service *serviceKeeper) updateTTL() error {
 		service.logger.Error("TTL定时更新服务状态", zap.String("service_id", serviceID))
 		return gen.ErrConsulServiceIDRequired
 	}
-	checkID := serviceID
-	if !strings.HasPrefix(checkID, "service:") {
-		checkID = "service:" + checkID
-	}
+	checkID := serviceCheckID(serviceID)
 	if err := service.client.Agent().UpdateTTL(checkID, "", state); err != nil {
+		if isUnknownCheckIDError(err) {
+			// 服务已被注销后，check 可能已不存在；停止心跳循环避免噪音日志。
+			service.logger.Debug("TTL心跳结束，check已不存在", zap.String("service_id", serviceID))
+			service.stop()
+			return nil
+		}
 		service.logger.Error("TTL定时更新服务状态", zap.String("service_id", serviceID), gen.FieldErr(err))
 		return err
 	}
 	service.logger.Debug("TTL定时更新服务状态", zap.String("service_id", serviceID), zap.String("status", state))
 	return nil
+}
+
+func isUnknownCheckIDError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "Unknown check ID")
 }
 
 func (service *serviceKeeper) stop() {

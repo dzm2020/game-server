@@ -10,7 +10,6 @@ import (
 
 	"time"
 
-	"github.com/duke-git/lancet/v2/convertor"
 	"github.com/duke-git/lancet/v2/maputil"
 	"go.uber.org/zap"
 )
@@ -60,10 +59,12 @@ func (c *Cluster) validateDependencies() error {
 
 func (c *Cluster) Init(ctx context.Context) error {
 	return c.BaseComponent.GuardInit(ctx, func(ctx context.Context) error {
+
 		if err := c.validateDependencies(); err != nil {
 			return err
 		}
-		c.logger = glog.GetLogger().With(gen.FieldComponent(clusterComponent), gen.FieldNodeID(c.selfNodeID()))
+
+		c.logger = glog.GetLogger().With(gen.FieldComponent(clusterComponent))
 
 		c.options = NormalizeOptions(c.options)
 		if err := ValidateOptions(c.options); err != nil {
@@ -104,11 +105,12 @@ func (c *Cluster) Start(ctx context.Context) error {
 	})
 }
 
-func (c *Cluster) addClient(client *client) {
+func (c *Cluster) addClient(client *client) bool {
 	if client == nil {
-		return
+		return false
 	}
-	c.clients.Set(client.nodeID, client)
+	_, ok := c.clients.GetOrSet(client.nodeID, client)
+	return ok
 }
 func (c *Cluster) removeClient(client *client) {
 	if client == nil {
@@ -122,8 +124,8 @@ func (c *Cluster) forEachClient(fn func(client *client) bool) {
 	})
 }
 func (c *Cluster) getClientByNodeID(nodeID string) *client {
-	client, _ := c.clients.Get(nodeID)
-	return client
+	cli, _ := c.clients.Get(nodeID)
+	return cli
 }
 
 func (c *Cluster) shouldConnectService(serviceName string) bool {
@@ -139,7 +141,7 @@ func (c *Cluster) selfNodeID() string {
 }
 
 func (c *Cluster) connectLoop(ctx context.Context) {
-	ticker := time.NewTicker(time.Second * 3)
+	ticker := time.NewTicker(c.options.ConnectInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -152,14 +154,10 @@ func (c *Cluster) connectLoop(ctx context.Context) {
 }
 
 func (c *Cluster) connectAll() {
-	if c.node == nil {
-		return
-	}
+
 	discovery := c.node.GetRegistry()
-	if discovery == nil {
-		return
-	}
 	serviceInstances := discovery.DiscoverAll()
+
 	for serviceName, instances := range serviceInstances {
 		if !c.shouldConnectService(serviceName) {
 			continue
@@ -184,7 +182,9 @@ func (c *Cluster) reconcileClient(instance gen.ServiceInstance) {
 		sendSize: c.options.Client.SendChanSize,
 		cluster:  c,
 	})
-	c.addClient(cli)
+	if c.addClient(cli) {
+		return
+	}
 	cli.start()
 }
 
@@ -260,17 +260,27 @@ func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
 		return gen.ErrMessageNil
 	}
 
+	encodedData, err := gen.Encode(msg)
+	if err != nil {
+		return err
+	}
+	createdAt := time.Now().Unix()
+	targetPID := to.String()
 	var success int
 	c.forEachClient(func(client *client) bool {
-		target := convertor.DeepClone(to)
-		target.NodeID = client.nodeID
-		clusterMsg, err := newClusterMessage(gen.NoSender, target, msg)
-		if err != nil {
-			c.logger.Warn("集群广播", zap.String("to", to.String()), gen.FieldErr(err))
-			return true
+		target := &gen.PID{
+			ActorID:   to.GetActorID(),
+			ActorName: to.GetActorName(),
+			NodeID:    client.nodeID,
 		}
-		if err := client.send(clusterMsg); err != nil {
-			c.logger.Warn("集群广播", zap.String("to", to.String()), gen.FieldErr(err))
+		clusterMsg := &gen.ClusterMessage{
+			CreatedAt: createdAt,
+			SourcePid: gen.NoSender,
+			TargetPid: target,
+			Data:      encodedData,
+		}
+		if err = client.send(clusterMsg); err != nil {
+			c.logger.Warn("集群广播", zap.String("to", targetPID), gen.FieldErr(err))
 			return true
 		}
 		success++
@@ -278,7 +288,7 @@ func (c *Cluster) Broadcast(to *gen.PID, msg *gen.Message) error {
 	})
 
 	c.logger.Debug("集群广播",
-		zap.String("to", to.String()),
+		zap.String("to", targetPID),
 		zap.Any("msg", msg),
 		zap.Int("success", success),
 	)

@@ -8,18 +8,20 @@ import (
 )
 
 const (
-	defaultAddress         = "127.0.0.1:8500"
-	defaultTTL             = 5 * time.Second
-	defaultDeregisterAfter = 5 * time.Minute
+	defaultAddress          = "127.0.0.1:8500"
+	defaultTTL              = 5 * time.Second
+	defaultDeregisterAfter  = 5 * time.Minute
+	defaultDiscoverCacheTTL = 2 * time.Second
 )
 
 type Options struct {
-	Address         string
-	Scheme          string
-	Token           string
-	Datacenter      string
-	TTL             time.Duration
-	DeregisterAfter time.Duration
+	Address          string
+	Scheme           string
+	Token            string
+	Datacenter       string
+	TTL              time.Duration
+	DeregisterAfter  time.Duration
+	DiscoverCacheTTL time.Duration
 }
 
 func DefaultOptions() Options {
@@ -53,6 +55,9 @@ func NormalizeOptions(options Options) Options {
 	if options.Address == "" {
 		options.Address = defaultAddress
 	}
+	if options.DiscoverCacheTTL <= 0 {
+		options.DiscoverCacheTTL = defaultDiscoverCacheTTL
+	}
 	return options
 }
 
@@ -65,6 +70,9 @@ func ValidateOptions(options Options) error {
 	}
 	if options.DeregisterAfter <= 0 {
 		return fmt.Errorf("invalid consul deregister-after: %s", options.DeregisterAfter)
+	}
+	if options.DiscoverCacheTTL <= 0 {
+		return fmt.Errorf("invalid consul discover cache ttl: %s", options.DiscoverCacheTTL)
 	}
 	return nil
 }

@@ -3,10 +3,8 @@ package grpc
 import (
 	"context"
 	"game-server/framework/gen"
-	"game-server/framework/grs"
 	"game-server/framework/pkg/glog"
 	"sync"
-	"time"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -29,11 +27,10 @@ type clientConfig struct {
 // newClient 创建节点连接
 func newClient(cfg clientConfig) *client {
 	p := &client{
-		nodeID:   cfg.nodeID,
-		address:  cfg.address,
-		sendCh:   make(chan *gen.ClusterMessage, cfg.sendSize),
-		cluster:  cfg.cluster,
-		runGroup: cfg.cluster.bgGroup,
+		nodeID:  cfg.nodeID,
+		address: cfg.address,
+		sendCh:  make(chan *gen.ClusterMessage, cfg.sendSize),
+		cluster: cfg.cluster,
 	}
 
 	p.logger = glog.GetLogger().With(
@@ -42,8 +39,8 @@ func newClient(cfg clientConfig) *client {
 		zap.String("address", cfg.address),
 	)
 
-	p.ctx, p.cancelFunc = context.WithCancel(p.runGroup.Context())
-	p.logger.Info("初始化客户端")
+	p.ctx, p.cancelFunc = context.WithCancel(p.cluster.bgGroup.Context())
+	p.logger.Debug("初始化客户端")
 	return p
 }
 
@@ -59,7 +56,6 @@ type client struct {
 	sendCh  chan *gen.ClusterMessage
 	cluster *Cluster
 
-	runGroup  *grs.Group
 	closeOnce sync.Once
 
 	logger *zap.Logger
@@ -69,57 +65,66 @@ type client struct {
 }
 
 func (p *client) start() {
-	p.runGroup.Go(func(context.Context) {
+	p.cluster.bgGroup.Go(func(context.Context) {
 		if err := p.connect(); err != nil {
 			p.Close()
 			return
 		}
 		p.startIOLoops()
-		p.logger.Info("客户端连接成功")
+		p.logger.Debug("客户端连接成功")
 	})
 }
 
 // connect 建立连接
 func (p *client) connect() error {
+	backoffOptions := p.cluster.options.Client.Backoff
+	keepaliveOptions := p.cluster.options.Client.Keepalive
+	permitWithoutStream := defaultClientPermitWithoutStream
+	if keepaliveOptions.PermitWithoutStream != nil {
+		permitWithoutStream = *keepaliveOptions.PermitWithoutStream
+	}
+
 	conn, err := grpc.NewClient(p.address,
 		// 生产环境建议替换为 TLS 凭证（credentials.NewTLS），
 		// 当前使用明文凭证适用于内网可信环境。
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithConnectParams(grpc.ConnectParams{
 			Backoff: backoff.Config{
-				// 首次重连等待时间：避免瞬时抖动导致的高频拨号。
-				BaseDelay: 1 * time.Second,
-				// 指数退避倍数：每次失败后等待时间按该倍率增长。
-				Multiplier: 1.6,
-				// 退避抖动比例：打散多节点同时重连，避免惊群。
-				Jitter: 0.2,
-				// 最大退避上限：故障持续时，最长每 30s 尝试一次重连。
-				MaxDelay: 30 * time.Second,
+				BaseDelay:  backoffOptions.BaseDelay,
+				Multiplier: backoffOptions.Multiplier,
+				Jitter:     backoffOptions.Jitter,
+				MaxDelay:   backoffOptions.MaxDelay,
 			},
-			// 单次建连最小超时窗口：避免网络抖动下过快失败。
-			MinConnectTimeout: 5 * time.Second,
+			MinConnectTimeout: backoffOptions.MinConnectTimeout,
 		}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			// 空闲 10s 发送一次 ping，及时发现静默断链。
-			Time: 10 * time.Second,
-			// ping 超过 3s 无响应则判定链路异常。
-			Timeout: 3 * time.Second,
-			// 即使没有活跃 RPC 也发送 keepalive，适合长连接场景。
-			PermitWithoutStream: true,
+			Time:                keepaliveOptions.Time,
+			Timeout:             keepaliveOptions.Timeout,
+			PermitWithoutStream: permitWithoutStream,
 		}),
-		// 单地址场景使用 pick_first，优先保持连接稳定性。
-		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"pick_first"}`),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingPolicy":"`+p.cluster.options.Client.LoadBalancingPolicy+`"}`),
 	)
 	if err != nil {
-		p.logger.Error("客户端创建失败")
+		p.logger.Error("客户端创建失败", gen.FieldErr(err))
 		return err
 	}
-	//  懒连接，创建 ClientConn 时通常不会马上连。真正连接一般发生在第一次 RPC，或者你主动Connect
+
 	conn.Connect()
+	if err = p.waitReady(conn); err != nil {
+		p.logger.Error("等待客户端连接就绪失败", gen.FieldErr(err))
+		_ = conn.Close()
+		return err
+	}
+
+	waitForReady := defaultClientStreamWaitForReady
+	if p.cluster.options.Client.WaitForReady != nil {
+		waitForReady = *p.cluster.options.Client.WaitForReady
+	}
+
 	client := NewNodeServiceClient(conn)
-	stream, err := client.Stream(p.ctx, grpc.WaitForReady(true))
+	stream, err := client.Stream(p.ctx, grpc.WaitForReady(waitForReady))
 	if err != nil {
-		p.logger.Error("客户端开启流失败")
+		p.logger.Error("客户端开启流失败", gen.FieldErr(err))
 		_ = conn.Close()
 		return err
 	}
@@ -128,21 +133,34 @@ func (p *client) connect() error {
 	p.conn = conn
 	p.stream = stream
 	p.mu.Unlock()
-	p.logger.Info("客户端连接成功")
 	return nil
 }
 
+func (p *client) waitReady(conn *grpc.ClientConn) error {
+	waitCtx, waitCancel := context.WithTimeout(p.ctx, p.cluster.options.Client.ConnectTimeout)
+	defer waitCancel()
+
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if state == connectivity.Shutdown {
+			return gen.ErrClusterPeerNotConnected
+		}
+		if !conn.WaitForStateChange(waitCtx, state) {
+			return waitCtx.Err()
+		}
+	}
+}
+
 func (p *client) startIOLoops() {
-	p.runGroup.Go(func(_ context.Context) {
-		p.logger.Info("客户端写协程启动")
+	p.cluster.bgGroup.Go(func(_ context.Context) {
 		p.sendLoop()
-		p.logger.Info("客户端写协程关闭")
 	})
 
-	p.runGroup.Go(func(_ context.Context) {
-		p.logger.Info("客户端读协程启动")
+	p.cluster.bgGroup.Go(func(_ context.Context) {
 		p.recvLoop()
-		p.logger.Info("客户端读协程关闭")
 	})
 }
 
@@ -186,7 +204,7 @@ func (p *client) recvLoop() {
 		if err != nil {
 			// 对端 handler 正常 return nil，流结束 || 连接关闭
 			if isServerStreamClosedErr(err) {
-				p.logger.Info("接收流关闭", gen.FieldErr(err))
+				p.logger.Debug("接收流关闭", gen.FieldErr(err))
 				p.Close()
 				return
 			}
@@ -258,6 +276,6 @@ func (p *client) Close() {
 		if conn != nil {
 			_ = conn.Close()
 		}
-		p.logger.Info("客户端关闭")
+		p.logger.Debug("客户端关闭")
 	})
 }
