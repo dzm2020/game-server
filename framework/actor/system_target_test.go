@@ -3,67 +3,30 @@ package actor
 import (
 	"context"
 	"game-server/framework/gen"
-	"game-server/framework/pkg/component"
 	"testing"
 	"time"
 )
 
-type testNode struct {
-	*component.Manager
-	options gen.NodeOptions
-	cluster gen.ICluster
-}
-
-func newTestNode(id string) *testNode {
-	return &testNode{
-		Manager: component.NewComponentsMgr(),
-		options: gen.NodeOptions{ID: id},
-	}
-}
-
-func (n *testNode) GetId() string                { return n.options.ID }
-func (n *testNode) GetName() string              { return "test-node" }
-func (n *testNode) GetExtAddress() string        { return "" }
-func (n *testNode) GetRpcAddress() string        { return "" }
-func (n *testNode) GetOptions() *gen.NodeOptions { return &n.options }
-func (n *testNode) GetCluster() gen.ICluster     { return n.cluster }
-func (n *testNode) GetSystem() gen.ISystem       { return nil }
-func (n *testNode) GetRegistry() gen.IRegistry {
-	return nil
-}
-func (n *testNode) AddComponents(comps ...component.IComponent) {
-	for _, comp := range comps {
-		_ = n.AddComponent(comp)
-	}
-}
-
 func newStartedSystem(t *testing.T) *System {
 	t.Helper()
-
-	s := NewSystem(newTestNode("node-test"))
-	if err := s.Init(context.Background()); err != nil {
-		t.Fatalf("init system failed: %v", err)
-	}
-	if err := s.Start(context.Background()); err != nil {
-		t.Fatalf("start system failed: %v", err)
-	}
-
-	t.Cleanup(func() {
-		_ = s.Stop(context.Background())
-	})
-	return s
+	return newStartedSystemWithRemote(t, "node-test", nil)
 }
 
-func newStartedSystemWithNode(t *testing.T, node *testNode) *System {
+func newStartedSystemWithRemote(t *testing.T, nodeID string, invoker gen.IRemoteInvoker) *System {
 	t.Helper()
 
-	s := NewSystem(node)
+	s := NewSystem()
+	s.SetNodeID(nodeID)
+	if invoker != nil {
+		s.SetRemoteInvoker(invoker)
+	}
 	if err := s.Init(context.Background()); err != nil {
 		t.Fatalf("init system failed: %v", err)
 	}
 	if err := s.Start(context.Background()); err != nil {
 		t.Fatalf("start system failed: %v", err)
 	}
+
 	t.Cleanup(func() {
 		_ = s.Stop(context.Background())
 	})
@@ -80,6 +43,9 @@ type captureCluster struct {
 func (c *captureCluster) Init(context.Context) error  { return nil }
 func (c *captureCluster) Start(context.Context) error { return nil }
 func (c *captureCluster) Stop(context.Context) error  { return nil }
+
+func (c *captureCluster) SetLocalInvoker(gen.ILocalInvoker) {}
+func (c *captureCluster) SetDiscovery(gen.IDiscovery)       {}
 
 func (c *captureCluster) SendToNode(from, to *gen.PID, msg *gen.Message) error {
 	c.from = from
@@ -188,7 +154,8 @@ func TestSystem_StopProcessDoesNotBlockWhenBusinessQueueFull(t *testing.T) {
 }
 
 func TestSystem_SendEnvelopeRequiresStartedState(t *testing.T) {
-	s := NewSystem(newTestNode("node-test"))
+	s := NewSystem()
+	s.SetNodeID("node-test")
 	err := s.SendEnvelope("target", gen.ActorEnvelope{Payload: gen.NewMessage(1, 1, nil), Sender: gen.NoSender})
 	if err != gen.ErrComponentNotStart {
 		t.Fatalf("SendEnvelope before start error mismatch: got=%v want=%v", err, gen.ErrComponentNotStart)
@@ -206,9 +173,7 @@ func TestSystem_AskRejectsRemotePID(t *testing.T) {
 
 func TestSystem_TellRemoteForwardsToCluster(t *testing.T) {
 	cluster := &captureCluster{}
-	node := newTestNode("node-test")
-	node.cluster = cluster
-	s := newStartedSystemWithNode(t, node)
+	s := newStartedSystemWithRemote(t, "node-test", cluster)
 
 	from := gen.NewPID(100, "sender", "node-test")
 	to := gen.NewPID(200, "remote", "remote-node")
@@ -234,9 +199,7 @@ func TestSystem_TellRemoteWithoutClusterReturnsErrClusterNil(t *testing.T) {
 
 func TestSystem_TellRemoteAfterStopRejected(t *testing.T) {
 	cluster := &captureCluster{}
-	node := newTestNode("node-test")
-	node.cluster = cluster
-	s := newStartedSystemWithNode(t, node)
+	s := newStartedSystemWithRemote(t, "node-test", cluster)
 	if err := s.Stop(context.Background()); err != nil {
 		t.Fatalf("stop system failed: %v", err)
 	}

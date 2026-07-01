@@ -21,11 +21,12 @@ type INode interface {
 
 // INodeBehavior defines node lifecycle callbacks.
 type INodeBehavior interface {
-	OnInit(node INode)
+	OnBeforeInit(node INode)
+	OnAfterInit(node INode)
 	OnBeforeStart(node INode)
 	OnAfterStart(node INode)
 	OnBeforeStop(node INode)
-	OnAfterStop(node INode, stopErr error)
+	OnAfterStop(node INode)
 	OnPanic(node INode, err error)
 }
 
@@ -33,7 +34,10 @@ var _ INodeBehavior = (*BaseNodeBehavior)(nil)
 
 type BaseNodeBehavior struct{}
 
-func (b BaseNodeBehavior) OnInit(node INode) {
+func (b BaseNodeBehavior) OnBeforeInit(node INode) {
+}
+
+func (b BaseNodeBehavior) OnAfterInit(node INode) {
 }
 
 func (b BaseNodeBehavior) OnBeforeStart(node INode) {
@@ -45,7 +49,7 @@ func (b BaseNodeBehavior) OnAfterStart(node INode) {
 func (b BaseNodeBehavior) OnBeforeStop(node INode) {
 }
 
-func (b BaseNodeBehavior) OnAfterStop(node INode, stopErr error) {
+func (b BaseNodeBehavior) OnAfterStop(node INode) {
 }
 
 func (b BaseNodeBehavior) OnPanic(node INode, err error) {}

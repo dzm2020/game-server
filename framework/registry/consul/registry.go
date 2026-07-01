@@ -19,7 +19,11 @@ const registryComponent = "registry.consul"
 
 type ServiceInstance = gen.ServiceInstance
 
-func New(options Options) *Registry {
+func New() *Registry {
+	return NewWithOptions(Options{})
+}
+
+func NewWithOptions(options Options) *Registry {
 	return &Registry{
 		options: options,
 	}

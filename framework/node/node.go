@@ -12,8 +12,6 @@ import (
 	"game-server/framework/pkg/glog"
 
 	"game-server/framework/registry/consul"
-	"reflect"
-
 	"os"
 	"os/signal"
 	"sync"
@@ -51,6 +49,7 @@ type Node struct {
 	system     gen.ISystem
 	registry   gen.IRegistry
 	addOnce    sync.Once
+	ctx        context.Context
 }
 
 func (n *Node) init(options gen.NodeOptions) {
@@ -76,10 +75,8 @@ func (n *Node) init(options gen.NodeOptions) {
 	glog.Init(options.Logger, logOptions...)
 
 	n.registry = consul.New()
-	n.cluster = grpc_cluster.New(n)
-	n.system = actor.NewSystem(n)
-
-	n.options.Behavior.OnInit(n)
+	n.cluster = grpc_cluster.New()
+	n.system = actor.NewSystem()
 }
 
 func (n *Node) GetId() string {
@@ -141,19 +138,62 @@ func (n *Node) SetCluster(cluster gen.ICluster) error {
 	n.cluster = cluster
 	return nil
 }
+func (n *Node) assemble() {
+	n.cluster.SetLocalInvoker(n.system)
+	n.cluster.SetDiscovery(n.registry)
+	n.system.SetRemoteInvoker(n.cluster)
+	n.AddComponents(n.registry, n.system, n.cluster)
+}
 
 func (n *Node) Startup() (err error) {
-	n.AddComponents(n.registry, n.system, n.cluster)
-
-	n.cluster.SetLocalInvoker(n.system)
-	n.cluster.SetDiscovery()
-
-	n.system.SetRemoteInvoker()
-
-	if err = n.Start(context.Background()); err != nil {
+	//  组装基础模块
+	n.assemble()
+	//  添加到组件管理器
+	if err = n.IManager.AddComponent(n.components...); err != nil {
+		return
+	}
+	//  初始化所有组件
+	if err = n.InitComponents(n.ctx); err != nil {
+		return err
+	}
+	//  启动化所有组件
+	if err = n.StartComponents(n.ctx); err != nil {
 		return err
 	}
 
+	//  所有模块启动完成后注册节点
+	if err = n.registryNode(); err != nil {
+		return err
+	}
+	glog.Info("节点进入运行",
+		zap.String("ext_address", n.GetExtAddress()),
+		zap.String("rpc_address", n.GetRpcAddress()),
+		zap.Int("process_id", os.Getpid()),
+	)
+	//  等待退出信号
+	n.waitSig()
+	//  注销节点
+	if err = n.GetRegistry().Deregister(); err != nil {
+		return err
+	}
+	//  停止所有组件
+	if err = n.StopComponents(n.ctx); err != nil {
+		return err
+	}
+
+	_ = glog.Stop()
+	return
+}
+func (n *Node) waitSig() {
+	//  等待退出信号
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+	sig := <-sigChan
+	glog.Info("节点收到退出信号", zap.String("signal", sig.String()))
+}
+
+func (n *Node) registryNode() error {
 	reg := gen.ServiceInstance{
 		ID:         n.GetId(),
 		Name:       n.GetName(),
@@ -162,76 +202,38 @@ func (n *Node) Startup() (err error) {
 		Meta:       n.options.Meta,
 		Tags:       n.options.Tags,
 	}
-	//  注册节点
-	if err = n.GetRegistry().Register(reg); err != nil {
-		glog.Error("注册节点", gen.FieldErr(err))
+	return n.GetRegistry().Register(reg)
+}
+
+func (n *Node) InitComponents(ctx context.Context) (err error) {
+	n.options.Behavior.OnBeforeInit(n)
+	if err = n.IManager.Init(ctx); err != nil {
+		glog.Error("节点组件初始化组件失败", gen.FieldErr(err))
 		return err
 	}
-
-	glog.Info("节点进入运行",
-		zap.String("ext_address", n.GetExtAddress()),
-		zap.String("rpc_address", n.GetRpcAddress()),
-		zap.Int("process_id", os.Getpid()),
-	)
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
-	sig := <-sigChan
-	glog.Info("节点收到退出信号", zap.String("signal", sig.String()))
-	return n.Stop(context.Background())
+	n.options.Behavior.OnAfterInit(n)
+	glog.Info("节点组件初始化完成", zap.Int("component_count", len(n.components)))
+	return nil
 }
 
-func (n *Node) addComponentsToManager() error {
-	var addErr error
-	n.addOnce.Do(func() {
-		components := append([]component.IComponent(nil), n.components...)
-		for _, comp := range components {
-			if err := n.IManager.AddComponent(comp); err != nil {
-				glog.Error("节点添加组件失败", gen.FieldErr(err), zap.String("typ", reflect.TypeOf(comp).String()))
-				addErr = err
-				return
-			}
-		}
-	})
-	return addErr
-}
-
-func (n *Node) Start(ctx context.Context) (err error) {
+func (n *Node) StartComponents(ctx context.Context) (err error) {
 	n.options.Behavior.OnBeforeStart(n)
-
-	if err := n.addComponentsToManager(); err != nil {
-		return err
-	}
-
 	if err = n.IManager.Start(ctx); err != nil {
 		glog.Error("节点启动组件失败", gen.FieldErr(err))
 		return err
 	}
-
 	n.options.Behavior.OnAfterStart(n)
-
 	glog.Info("节点组件启动完成", zap.Int("component_count", len(n.components)))
 	return nil
 }
 
-// Stop gracefully stops the node and all components.
-func (n *Node) Stop(ctx context.Context) error {
+func (n *Node) StopComponents(ctx context.Context) error {
 	n.options.Behavior.OnBeforeStop(n)
-
-	if err := n.GetRegistry().Deregister(n.GetId()); err != nil {
-		glog.Error("注销节点", gen.FieldErr(err))
+	if err := n.IManager.Stop(ctx); err != nil {
+		glog.Info("节点组件停止失败", gen.FieldErr(err))
 		return err
 	}
-
-	stopErr := n.IManager.Stop(ctx)
-	if stopErr != nil {
-		glog.Error("节点组件停止错误", gen.FieldErr(stopErr))
-	}
-
-	n.options.Behavior.OnAfterStop(n, stopErr)
-
-	glog.Info("节点完成停止")
-	_ = glog.Stop()
-	return stopErr
+	n.options.Behavior.OnAfterStop(n)
+	glog.Info("节点组件完成停止")
+	return nil
 }

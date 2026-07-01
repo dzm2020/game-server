@@ -24,12 +24,12 @@ var (
 )
 
 type IManager interface {
-	Init() error
+	Init(ctx context.Context) error
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	ComponentCount() int
 	GetComponent(t any) IComponent
-	AddComponent(component IComponent) error
+	AddComponent(component ...IComponent) error
 	RemoveComponent(t IComponent) error
 	Range(fn func(component IComponent))
 }
@@ -79,27 +79,25 @@ func (cm *Manager) GetComponent(t any) IComponent {
 }
 
 // AddComponent 注册组件，按注册顺序启动，按逆序停止。
-func (cm *Manager) AddComponent(component IComponent) error {
+func (cm *Manager) AddComponent(component ...IComponent) error {
 	if cm.started.Load() {
 		return ErrCannotRegisterComponentAfterStarted
-	}
-
-	if component == nil {
-		return ErrComponentCannotBeNil
 	}
 
 	cm.orderMu.Lock()
 	defer cm.orderMu.Unlock()
 
-	componentType := reflect.TypeOf(component)
-	// 检查是否已注册同类型组件
-	if _, exists := cm.components.Get(componentType); exists {
-		return ErrComponentAlreadyRegistered
-	}
+	for _, c := range component {
+		componentType := reflect.TypeOf(component)
+		// 检查是否已注册同类型组件
+		if _, exists := cm.components.Get(componentType); exists {
+			return ErrComponentAlreadyRegistered
+		}
 
-	// 注册组件
-	cm.components.Set(componentType, component)
-	cm.order = append(cm.order, componentType)
+		// 注册组件
+		cm.components.Set(componentType, c)
+		cm.order = append(cm.order, componentType)
+	}
 	return nil
 }
 
@@ -134,7 +132,7 @@ func (cm *Manager) RemoveComponent(t IComponent) error {
 	return nil
 }
 
-func (cm *Manager) Init() error {
+func (cm *Manager) Init(ctx context.Context) error {
 	if cm.started.Load() {
 		return ErrManagerAlreadyStarted
 	}
@@ -150,7 +148,7 @@ func (cm *Manager) Init() error {
 			continue
 		}
 
-		if err := component.Init(context.Background()); err != nil {
+		if err := component.Init(ctx); err != nil {
 			return err
 		}
 	}
@@ -165,10 +163,6 @@ func (cm *Manager) Start(ctx context.Context) (err error) {
 	}
 	if cm.started.Load() {
 		return ErrManagerAlreadyStarted
-	}
-
-	if err = cm.Init(); err != nil {
-		return err
 	}
 
 	cm.orderMu.RLock()

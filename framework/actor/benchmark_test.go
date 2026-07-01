@@ -10,8 +10,10 @@ import (
 	"time"
 )
 
-func BenchmarkSingleActorThroughput(b *testing.B) {
-	s := NewSystem(newTestNode("node-bench"))
+func startBenchmarkSystem(b *testing.B) *System {
+	b.Helper()
+	s := NewSystem()
+	s.SetNodeID("node-bench")
 	if err := s.Init(context.Background()); err != nil {
 		b.Fatalf("init system failed: %v", err)
 	}
@@ -21,6 +23,11 @@ func BenchmarkSingleActorThroughput(b *testing.B) {
 	b.Cleanup(func() {
 		_ = s.Stop(context.Background())
 	})
+	return s
+}
+
+func BenchmarkSingleActorThroughput(b *testing.B) {
+	s := startBenchmarkSystem(b)
 
 	var processed atomic.Int64
 	pid, err := s.Spawn(func(gen.IContext) {
@@ -73,16 +80,7 @@ func BenchmarkSingleActorThroughputParallel(b *testing.B) {
 
 		p := p
 		b.Run(fmt.Sprintf("P%d", p), func(b *testing.B) {
-			s := NewSystem(newTestNode("node-bench"))
-			if err := s.Init(context.Background()); err != nil {
-				b.Fatalf("init system failed: %v", err)
-			}
-			if err := s.Start(context.Background()); err != nil {
-				b.Fatalf("start system failed: %v", err)
-			}
-			b.Cleanup(func() {
-				_ = s.Stop(context.Background())
-			})
+			s := startBenchmarkSystem(b)
 
 			var processed atomic.Int64
 			pid, err := s.Spawn(func(gen.IContext) {
