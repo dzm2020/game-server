@@ -88,7 +88,13 @@ func (cm *Manager) AddComponent(component ...IComponent) error {
 	defer cm.orderMu.Unlock()
 
 	for _, c := range component {
-		componentType := reflect.TypeOf(component)
+		if c == nil {
+			return ErrComponentCannotBeNil
+		}
+		componentType := reflect.TypeOf(c)
+		if componentType == nil {
+			return ErrComponentTypeCannotBeNil
+		}
 		// 检查是否已注册同类型组件
 		if _, exists := cm.components.Get(componentType); exists {
 			return ErrComponentAlreadyRegistered
@@ -108,7 +114,7 @@ func (cm *Manager) RemoveComponent(t IComponent) error {
 		return ErrCannotRemoveComponentAfterStarted
 	}
 	if t == nil {
-		return ErrComponentCannotBeNil
+		return ErrComponentTypeCannotBeNil
 	}
 	componentType := reflect.TypeOf(t)
 	if componentType == nil {

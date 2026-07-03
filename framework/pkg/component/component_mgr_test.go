@@ -146,6 +146,9 @@ func TestManager_StartInitOrderAndCannotRestart(t *testing.T) {
 	if err := mgr.AddComponent(c2); err != nil {
 		t.Fatalf("AddComponent c2 failed: %v", err)
 	}
+	if err := mgr.Init(context.Background()); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	if err := mgr.Start(context.Background()); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

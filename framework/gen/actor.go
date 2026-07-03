@@ -26,6 +26,7 @@ type ILocalInvoker interface {
 type ISystem interface {
 	component.IComponent
 	ILocalInvoker
+	SetNodeID(nodeID string)
 	SetRemoteInvoker(invoker IRemoteInvoker)
 	Spawn(handler ActorHandler, opts SpawnOptions) (*PID, error)
 	SpawnActor(handler IActor, opts SpawnOptions) (*PID, error)

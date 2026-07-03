@@ -12,7 +12,7 @@ type Behavior struct {
 	gen.BaseNodeBehavior
 }
 
-func (b Behavior) OnInit(node gen.INode) {
+func (b Behavior) OnBeforeInit(node gen.INode) {
 	protoAddr := "ws://127.0.0.1:7000/ws"
 	if ext := node.GetExtAddress(); ext != "" {
 		protoAddr = "ws://" + ext + "/ws"
@@ -28,11 +28,3 @@ func (b Behavior) OnInit(node gen.INode) {
 	})
 	node.AddComponents(gatewayComp)
 }
-
-func (b Behavior) OnBeforeStart(node gen.INode) {}
-
-func (b Behavior) OnAfterStart(node gen.INode) {}
-
-func (b Behavior) OnBeforeStop(node gen.INode) {}
-
-func (b Behavior) OnAfterStop(node gen.INode, stopErr error) {}

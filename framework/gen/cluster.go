@@ -12,6 +12,7 @@ type IRemoteInvoker interface {
 type ICluster interface {
 	component.IComponent
 	IRemoteInvoker
+	ApplyNode(id, listenAddr string)
 	SetLocalInvoker(invoker ILocalInvoker)
 	SetDiscovery(discover IDiscovery)
 }

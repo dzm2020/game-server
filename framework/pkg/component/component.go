@@ -12,7 +12,7 @@ type IComponent interface {
 	Status() LifecycleState
 }
 
-type BaseComponent struct {
+type BaseComponent[T IComponent] struct {
 	lifecycle Controller
 }
 

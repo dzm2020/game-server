@@ -20,7 +20,7 @@ func main() {
 		Logger:     logger,
 		Behavior:   gatewaysvr.Behavior{},
 	})
-	if err := n.SetCluster(grpc_cluster.NewWithOptions(n, grpc_cluster.Options{
+	if err := n.SetCluster(grpc_cluster.NewWithOptions(grpc_cluster.Options{
 		Remotes: []string{
 			"chat",
 			"game",

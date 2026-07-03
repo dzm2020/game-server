@@ -53,6 +53,16 @@ func (c *Cluster) SetDiscovery(discover gen.IDiscovery) {
 	c.discover = discover
 }
 
+// ApplyNode binds node identity before Init.
+func (c *Cluster) ApplyNode(id, listenAddr string) {
+	if id != "" {
+		c.options.ID = id
+	}
+	if listenAddr != "" {
+		c.options.ListenAddr = listenAddr
+	}
+}
+
 func (c *Cluster) getID() string {
 	return c.options.ID
 }

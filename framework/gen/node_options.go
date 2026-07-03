@@ -16,6 +16,13 @@ type NodeOptions struct {
 	Tags       []string
 	Logger     LoggerOptions
 	Behavior   INodeBehavior
+	Factories  NodeFactories
+}
+
+type NodeFactories struct {
+	Registry func() IRegistry
+	System   func() ISystem
+	Cluster  func() ICluster
 }
 
 func NormalizeNodeOptions(opts NodeOptions) NodeOptions {

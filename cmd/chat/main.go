@@ -19,7 +19,7 @@ func main() {
 		Logger:     logger,
 		Behavior:   chatsvr.Behavior{},
 	})
-	if err := n.SetCluster(grpc_cluster.NewWithOptions(n, grpc_cluster.Options{
+	if err := n.SetCluster(grpc_cluster.NewWithOptions(grpc_cluster.Options{
 		Remotes: []string{"game", "gateway"},
 		Client: grpc_cluster.ClientOptions{
 			SendChanSize: 1000,
